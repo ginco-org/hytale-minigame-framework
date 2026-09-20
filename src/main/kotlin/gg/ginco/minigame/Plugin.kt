@@ -2,15 +2,20 @@ package gg.ginco.minigame
 
 import com.hypixel.hytale.server.core.plugin.JavaPlugin
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit
+import gg.ginco.minigame.command.MinigameCommand
+import gg.ginco.minigame.system.PhaseSystem
 import java.util.logging.Level
 
 class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
 
     override fun setup() {
-        logger.at(Level.INFO).log("MinigameFramework initialized")
+        Components.register(entityStoreRegistry)
+        entityStoreRegistry.registerSystem(PhaseSystem())
+        logger.at(Level.INFO).log("MinigameFramework components and systems registered")
     }
 
     override fun start() {
+        commandRegistry.registerCommand(MinigameCommand())
         logger.at(Level.INFO).log("MinigameFramework started")
     }
 

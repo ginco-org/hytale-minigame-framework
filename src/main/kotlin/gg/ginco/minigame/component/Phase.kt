@@ -28,8 +28,8 @@ sealed interface Phase : Component<EntityStore> {
         override fun clone(): Phase = this
     }
 
-    /** Game is wrapping up. */
-    data class Ending(val reason: EndReason) : Phase {
+    /** Game is wrapping up. [remainingSeconds] gives players time to see results. */
+    data class Ending(val reason: EndReason, val remainingSeconds: Float = ENDING_DURATION_SECONDS) : Phase {
         override fun clone(): Phase = this
     }
 
@@ -51,6 +51,9 @@ enum class EndReason {
     ALL_LEFT,
     FORCED,
 }
+
+/** How long the [Phase.Ending] phase lasts before the instance is cleaned up. */
+const val ENDING_DURATION_SECONDS = 3f
 
 /**
  * Minimal BuilderCodec for [Phase].
