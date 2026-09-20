@@ -1,0 +1,63 @@
+package gg.ginco.minigame.util
+
+import com.hypixel.hytale.component.*
+import com.hypixel.hytale.server.core.Message
+import com.hypixel.hytale.server.core.universe.PlayerRef
+import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
+import gg.ginco.minigame.component.InMinigame
+import gg.ginco.minigame.component.Role
+import java.util.function.BiConsumer
+
+/**
+ * Bulk-operation helper for all players in a minigame instance.
+ *
+ * NOT a component — a short-lived utility scoped to one Store + controller.
+ */
+class PlayerSet(
+    private val store: Store<EntityStore>,
+    private val controllerRef: Ref<EntityStore>
+) {
+    fun all(): List<Ref<EntityStore>> {
+        val result = mutableListOf<Ref<EntityStore>>()
+        val consumer = BiConsumer<ArchetypeChunk<EntityStore>, CommandBuffer<EntityStore>> { chunk, _ ->
+            for (i in 0 until chunk.size()) {
+                val inMinigame = chunk.getComponent(i, InMinigame.componentType) ?: continue
+                if (inMinigame.controllerRef == controllerRef) {
+                    result.add(chunk.getReferenceTo(i))
+                }
+            }
+        }
+        store.forEachChunk(Archetype.of(InMinigame.componentType), consumer)
+        return result
+    }
+
+    fun withRole(role: Role): List<Ref<EntityStore>> {
+        val result = mutableListOf<Ref<EntityStore>>()
+        val consumer = BiConsumer<ArchetypeChunk<EntityStore>, CommandBuffer<EntityStore>> { chunk, _ ->
+            for (i in 0 until chunk.size()) {
+                val inMinigame = chunk.getComponent(i, InMinigame.componentType) ?: continue
+                if (inMinigame.controllerRef == controllerRef) {
+                    val entityRole = chunk.getComponent(i, Role.componentType) ?: continue
+                    if (entityRole == role) {
+                        result.add(chunk.getReferenceTo(i))
+                    }
+                }
+            }
+        }
+        store.forEachChunk(Archetype.of(InMinigame.componentType, Role.componentType), consumer)
+        return result
+    }
+
+    fun sendMessage(message: Message) {
+        for (ref in all()) {
+            val playerRef = store.getComponent(ref, PlayerRef.getComponentType()) ?: continue
+            playerRef.sendMessage(message)
+        }
+    }
+
+    fun count(): Int = all().size
+
+    fun isEmpty(): Boolean = all().isEmpty()
+
+    fun isNotEmpty(): Boolean = !isEmpty()
+}

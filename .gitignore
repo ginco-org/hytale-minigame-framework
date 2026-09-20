@@ -1,0 +1,5 @@
+.direnv/
+.gradle/
+.kotlin/
+build/
+run/
