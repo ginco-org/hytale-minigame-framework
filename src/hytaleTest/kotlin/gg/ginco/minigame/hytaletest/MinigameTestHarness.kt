@@ -5,7 +5,6 @@ import com.hypixel.hytale.component.CommandBuffer
 import com.hypixel.hytale.component.ComponentRegistryProxy
 import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.component.Store
-import com.hypixel.hytale.server.core.Message
 import com.hypixel.hytale.server.core.command.system.CommandManager
 import com.hypixel.hytale.server.core.permissions.PermissionsModule
 import com.hypixel.hytale.server.core.permissions.provider.HytalePermissionsProvider
@@ -49,13 +48,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * registry). Registration must complete before the command tree is registered
  * because `MinigameCommand`'s static initializer reads the component types.
  *
- * ## Permissions and output capture
+ * ## Permissions and command output
  *
  * The admin subcommands require `hytale:Admin`; [grantAdmin] adds the simulated
  * player to that group through the server's real [HytalePermissionsProvider].
- * Command output is captured via [Message.getRawText] on messages the player
- * receives (`Context.sendMessage` → `PlayerRef.sendMessage` → `PacketHandler`),
- * so tests can assert on what the commands answered without a game client.
+ * Command *text* is assertable via hytest: the simulated player's fake network
+ * channel records every message packet the server writes, exposed as
+ * `SimulatedPlayer.receivedMessages()` / `drainReceivedMessages()` /
+ * `sawMessage(fragment)`.
  *
  * Nothing about the framework itself is stubbed.
  */
@@ -63,9 +63,6 @@ object MinigameTestHarness {
 
     private val commandsRegistered = AtomicBoolean(false)
     private val sliceRegistered = AtomicBoolean(false)
-
-    /** Raw text of every message the framework sent to any simulated player since the last drain. */
-    private val output = CopyOnWriteArrayList<String>()
 
     fun install(world: World) {
         ensureSliceRegistered(world)
@@ -116,20 +113,6 @@ object MinigameTestHarness {
 
     private fun adminProvider(): HytalePermissionsProvider? =
         PermissionsModule.get().firstPermissionProvider as? HytalePermissionsProvider
-
-    // ---- command output capture ---------------------------------------------
-
-    fun recordOutput(message: Message) {
-        output.add(message.rawText)
-    }
-
-    fun lastOutputContains(fragment: String): Boolean = output.any { it.contains(fragment) }
-
-    fun drainOutput(): List<String> {
-        val snapshot = output.toList()
-        output.clear()
-        return snapshot
-    }
 
     // ---- store access ------------------------------------------------------
 

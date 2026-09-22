@@ -28,9 +28,12 @@ import gg.ginco.minigame.hytaletest.Players
  * Commands are executed through the real `CommandManager.handleCommand` path via
  * `SimulatedPlayer.runCommand` (leading `/` optional). Assertions read the store
  * on the world thread — `Store` enforces thread identity — while the test body
- * runs off-thread (hytest contract). Command *text* responses are not captured:
- * they are written to the simulated player's fake network channel, which hytest
- * discards, so the guards below assert the observable store state instead.
+ * runs off-thread (hytest contract). Command *text* is assertable too: the
+ * simulated player's fake channel records every message packet the server
+ * writes, readable via `SimulatedPlayer.receivedMessages()` /
+ * `drainReceivedMessages()` / `sawMessage(fragment)` — capture is synchronous
+ * with command execution, so the text is there as soon as `runCommand(...).join()`
+ * returns (see `commandResponsesCarryExpectedText`).
  */
 class MinigameLifecycleTest {
 
@@ -269,6 +272,46 @@ class MinigameLifecycleTest {
             t.assertEquals(Phase.Kind.COUNTDOWN, MinigameTestHarness.phaseOf(store, controller)?.kind,
                 "should still be counting down")
         }
+        t.succeed()
+    }
+
+    /** Command text is assertable: the fake channel captures every message packet the server writes. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun commandResponsesCarryExpectedText(t: HytaleTestHelper) {
+        val alice = player(t)
+        alice.runCommand("minigame create arena").join()
+
+        val created = alice.drainReceivedMessages()
+        t.assertTrue(
+            created.contains("Created minigame instance (gameType=arena, phase=Waiting)."),
+            "create should confirm the instance, got: $created"
+        )
+
+        alice.runCommand("minigame join").join()
+        val joined = alice.drainReceivedMessages()
+        t.assertTrue(
+            joined.contains("Alice joined the minigame."),
+            "join should announce membership (the member is included), got: $joined"
+        )
+
+        val bob = player(t, "Bob")
+        bob.runCommand("minigame join").join()
+        t.assertTrue(
+            alice.sawMessage("Bob joined the minigame."),
+            "existing members should hear about new joins, got: ${alice.receivedMessages()}"
+        )
+
+        bob.runCommand("minigame join").join()
+        t.assertTrue(
+            bob.sawMessage("You are already in a minigame. Use /minigame leave first."),
+            "double join should be rejected with guidance, got: ${bob.receivedMessages()}"
+        )
+
+        alice.runCommand("minigame start --seconds=9").join()
+        t.assertTrue(
+            alice.sawMessage("Started 1 instance(s) — 9.0 s countdown."),
+            "start should confirm the countdown, got: ${alice.receivedMessages()}"
+        )
         t.succeed()
     }
 }
