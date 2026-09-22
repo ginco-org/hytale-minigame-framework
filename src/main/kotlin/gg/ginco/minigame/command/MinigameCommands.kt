@@ -150,7 +150,14 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
     }
 }
 
-/** Forces every live instance into the ending phase with [gg.ginco.minigame.component.EndReason.FORCED]. */
+/**
+ * Forces every live instance into [gg.ginco.minigame.component.EndReason.FORCED] ending.
+ *
+ * Uses the default ending grace period (not `0f`): even a forced stop should let
+ * players see the wrap-up before cleanup — and an instant `0f` ending would let
+ * [gg.ginco.minigame.system.PhaseSystem] tear the instance down within one tick,
+ * leaving no observable Ending state for players (or tests) to catch.
+ */
 class StopCommand : AbstractWorldCommand("stop", "minigame.commands.stop.desc") {
 
     init {
@@ -170,7 +177,8 @@ class StopCommand : AbstractWorldCommand("stop", "minigame.commands.stop.desc") 
             }
         })
         for (ref in live) {
-            store.replaceComponent(ref, Phase.componentType, Phase.ending(EndReason.FORCED, 0f))
+            store.replaceComponent(ref, Phase.componentType, Phase.ending(EndReason.FORCED))
+            PlayerSet(store, ref).sendMessage(Message.raw("The minigame has been stopped."))
         }
 
         context.sendMessage(

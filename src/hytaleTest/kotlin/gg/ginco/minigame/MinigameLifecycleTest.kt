@@ -185,16 +185,19 @@ class MinigameLifecycleTest {
 
         alice.runCommand("minigame stop").join()
 
-        // stop => Ending(FORCED) ...
+        // stop => Ending(FORCED) ... (default grace period, so this state is
+        // observable: PhaseSystem only tears the instance down after it elapses)
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(world)
             val ref = MinigameTestHarness.controllers(store).singleOrNull()
             val phase = ref?.let { MinigameTestHarness.phaseOf(store, it) }
             t.assertTrue(
-                phase?.kind == Phase.Kind.ENDING && phase?.reason == EndReason.FORCED,
+                phase != null && phase.kind == Phase.Kind.ENDING && phase.reason == EndReason.FORCED,
                 "right after stop the instance must be Ending(FORCED), got $phase"
             )
         }
+        t.assertTrue(alice.sawMessage("The minigame has been stopped."),
+            "members should be notified of the forced stop, got: ${alice.receivedMessages()}")
         // ... then PhaseSystem removes the instance and strips InMinigame/Role
         // from every participant (ENDING_DURATION_SECONDS = 3s of ticks).
         t.succeedWhen {
