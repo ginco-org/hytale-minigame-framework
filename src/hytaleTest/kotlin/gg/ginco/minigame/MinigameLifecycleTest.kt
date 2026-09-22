@@ -38,7 +38,6 @@ import gg.ginco.minigame.hytaletest.Players
 class MinigameLifecycleTest {
 
     private fun player(t: HytaleTestHelper, name: String = "Alice"): SimulatedPlayer {
-        MinigameTestHarness.install(t.world)
         return Players.admin(t, name)
     }
 

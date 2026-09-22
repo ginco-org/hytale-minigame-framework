@@ -1,7 +1,21 @@
 # RESOLVED — was: hytest wiring + first integration tests (thread thr_vvvkaqc6ne-1)
 
 Everything in the original handoff below is done; the blocker is fixed and
-`./gradlew hytaleTest` is **9/9 green**.
+`./gradlew hytaleTest` is green (10 tests, stable across repeated runs).
+
+## Update (supervision session): harness mount replaced by real plugin lifecycle
+
+hytest now ships the plugin under test's manifest on the merged test jar with
+hytest attached as a `SubPlugins` entry — the server loads the REAL
+`gg.ginco.minigame.Plugin` (identity, data dir, `setup()`/`start()`), sharing
+one classloader with the test classes. `MinigameTestHarness` no longer mounts
+the slice; it only grants admin and exposes store accessors. See hytest commit
+"Load the plugin under test as a real plugin via the SubPlugins manifest".
+
+Also fixed on this branch: `StopCommand` used `ending(FORCED, 0f)`, so
+PhaseSystem tore the instance down within one tick — the Ending(FORCED) state
+was unobservable and `stopForcesEndingThenCleanupReleasesPlayers` raced it
+(flake). Forced stop now uses the default 3s grace period and notifies members.
 
 ## What closed the blocker (sealed-interface components)
 
@@ -41,8 +55,8 @@ Optional args in hytale's command system are NAMED: `/minigame start
    with command execution — text is readable right after `runCommand(...).join()`.
    `MinigameTestHarness`'s never-wired `recordOutput`/`drainOutput` helpers were
    removed in favor of the real API; see `commandResponsesCarryExpectedText`.
-2. Merged jar carries only hytest's manifest — plugin under test must bootstrap
-   itself (see `MinigameTestHarness`).
+2. RESOLVED — the merged jar now carries the plugin under test's manifest with
+   hytest as a sub-plugin; the real plugin lifecycle runs (see top).
 3. No per-run server log file; `-PhytestLogs` maps to `showServerLogs`, but the
    server logs almost nothing to stdout anyway.
 4. Gotcha for test authors: a test that neither uses `succeedWhen` nor calls
