@@ -1,7 +1,12 @@
 plugins {
+    // hygradle comes onto the classpath via gg.ginco.hygradle.settings (0.5.0) in
+    // settings.gradle.kts, so no version is declared here.
     id("gg.ginco.hygradle")
     kotlin("jvm") version "2.3.20"
     id("com.google.devtools.ksp") version "2.3.9"
+    // Integration tests: `@HytaleTest` methods in src/hytaleTest/ run inside a
+    // real Hytale server via the `hytaleTest` task.
+    id("gg.ginco.hytest")
 }
 
 group = "gg.ginco"
@@ -20,4 +25,9 @@ hytale {
     description = "Minigame framework for Hytale"
     serverVersion = "0.6.8"
     mainClass = "gg.ginco.minigame.Plugin"
+}
+
+hytest {
+    // Forward the server's own logs while debugging a failing test.
+    showServerLogs = providers.gradleProperty("hytestLogs").isPresent
 }

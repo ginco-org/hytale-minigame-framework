@@ -43,3 +43,38 @@ use `./gradlew runServer` (requires OAuth device login) to get a matching 0.6.8 
 - team assignment (`TeamData` / `TeamMembers`) on join
 - region marker placement + `Bounds` zone checks against player positions
 - disconnect/leave handling beyond `/minigame leave`
+
+
+## Testing
+
+Integration tests run inside a real, authenticated Hytale server (0.6.8) via the
+[`hytest`](../hytest) harness, consumed as a local composite build — mirroring
+hytest's own `example/`:
+
+- `settings.gradle.kts` `includeBuild`s the local hytest checkout (`~/projects/hytest`)
+  and pins `gg.ginco.hygradle.settings` to 0.5.0 (which provides `provisionServer`).
+- `build.gradle.kts` applies `gg.ginco.hytest` and `gg.ginco.hygradle`; tests live in
+  the `hytaleTest` source set (`src/hytaleTest/kotlin`).
+
+Run them with:
+
+```sh
+./gradlew hytaleTest              # boots the server, runs every @HytaleTest
+./gradlew -PhytestLogs hytaleTest # forward server stdout into the build log
+./gradlew hytaleTest --tests 'gg.ginco.minigame.MinigameLifecycleTest.createPutsInstanceInWaiting'
+```
+
+The first run provisions the authenticated server build into
+`~/.gradle/caches/hygradle/server/` (non-interactive while the OAuth token cache
+in `~/.local/share/hygradle/token.json` is valid).
+
+Notes:
+
+- hytest deploys a single merged `Hytest.jar` whose manifest entrypoint is
+  `HytestPlugin`, so the framework's own `Plugin` class is **not** loaded during
+  tests; `MinigameTestHarness` (in the `hytaleTest` source set) registers the
+  slice — components, `PhaseSystem`, `/minigame` — exactly like `Plugin` does.
+- Commands are executed via `SimulatedPlayer.runCommand` (real `CommandManager`
+  path, admin group granted through `HytalePermissionsProvider`), and assertions
+  read the ECS store on the world thread (`t.runOnWorld`); phase transitions are
+  awaited with `t.succeedWhen { }`, never sleeps.

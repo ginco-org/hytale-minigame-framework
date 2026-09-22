@@ -3,3 +3,12 @@
 .kotlin/
 build/
 run/
+.direnv/
+.gradle/
+.kotlin/
+build/
+run/
+/META-INF/
+/gg/
+/kotlin/
+/org/

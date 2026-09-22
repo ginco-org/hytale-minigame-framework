@@ -4,6 +4,7 @@ import com.hypixel.hytale.component.AddReason
 import com.hypixel.hytale.component.Archetype
 import com.hypixel.hytale.component.ArchetypeChunk
 import com.hypixel.hytale.component.CommandBuffer
+import com.hypixel.hytale.component.Component
 import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.server.core.Message
@@ -52,7 +53,16 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
     }
 
     companion object {
-        val CONTROLLERS_WITH_PHASE = Archetype.of(ControllerComponent.componentType, Phase.componentType)
+        /**
+         * Lazily built: [Archetype.of] captures the ComponentType objects at
+         * construction time, so it must not run before [gg.ginco.minigame.Components.register]
+         * has assigned the companion component types — an eagerly initialised
+         * archetype would snapshot nulls and every store scan would silently
+         * match nothing (validation then rejects any holder built from it).
+         */
+        val CONTROLLERS_WITH_PHASE: Archetype<EntityStore> by lazy {
+            Archetype.of(ControllerComponent.componentType, Phase.componentType)
+        }
 
         /** Shared scanner shape; avoids Kotlin overload ambiguity between the BiConsumer/BiPredicate forEachChunk variants. */
         fun controllerScanner(body: (ArchetypeChunk<EntityStore>, Int) -> Unit):
@@ -73,13 +83,26 @@ class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.d
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
         val gameTypeId = gameTypeArg.get(context)
 
-        val ref = store.addEntity(MinigameCommand.CONTROLLERS_WITH_PHASE, AddReason.SPAWN)
+        // Build the components FIRST, placed at their ComponentType's slot.
+        //
+        // Archetype slots are indexed by ComponentType.getIndex() (registry-
+        // wide), not by construction order — and Holder/validateComponents
+        // compares each array slot against the archetype's slot at the same
+        // position. So the component array must be sized to the archetype's
+        // slot array with each component stored at its type's index; a plain
+        // positional array (e.g. [Controller, Phase]) fails validation with
+        // "Invalid component at index 0 expected null but found ...".
+        val archetype = MinigameCommand.CONTROLLERS_WITH_PHASE
+        @Suppress("UNCHECKED_CAST")
+        val components = arrayOfNulls<Component<EntityStore>>(archetype.length())
+        components[ControllerComponent.componentType.index] = ControllerComponent(gameTypeId = gameTypeId)
+        components[Phase.componentType.index] = Phase.Waiting
+        val holder = store.registry.newHolder(archetype, components as Array<Component<EntityStore>>)
+        val ref = store.addEntity(holder, AddReason.SPAWN)
         if (ref == null) {
             context.sendMessage(Message.raw("Failed to create minigame instance."))
             return
         }
-        store.replaceComponent(ref, ControllerComponent.componentType, ControllerComponent(gameTypeId = gameTypeId))
-        store.replaceComponent(ref, Phase.componentType, Phase.Waiting)
 
         context.sendMessage(Message.raw("Created minigame instance (gameType=$gameTypeId, phase=Waiting)."))
     }
