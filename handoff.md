@@ -32,14 +32,22 @@ Optional args in hytale's command system are NAMED: `/minigame start
 --seconds=7`. A positional `7` fails to parse and the command never runs
 (future completes normally). Tests use `--seconds=`.
 
-## Harness limitations (still open, unchanged)
+## Harness limitations (updated)
 
-1. `FakeChannelConnection.write()` discards packets — command text unassertable.
-   (`MinigameTestHarness.recordOutput`/`drainOutput` are dead code.)
+1. RESOLVED — command text is now assertable: hytest's `FakeChannelConnection`
+   records `ServerMessage` raw text (bounded, thread-safe), exposed as
+   `SimulatedPlayer.receivedMessages()` / `drainReceivedMessages()` /
+   `sawMessage(fragment)` (hytest commit `ed0ff35`). Capture is synchronous
+   with command execution — text is readable right after `runCommand(...).join()`.
+   `MinigameTestHarness`'s never-wired `recordOutput`/`drainOutput` helpers were
+   removed in favor of the real API; see `commandResponsesCarryExpectedText`.
 2. Merged jar carries only hytest's manifest — plugin under test must bootstrap
    itself (see `MinigameTestHarness`).
 3. No per-run server log file; `-PhytestLogs` maps to `showServerLogs`, but the
    server logs almost nothing to stdout anyway.
+4. Gotcha for test authors: a test that neither uses `succeedWhen` nor calls
+   `t.succeed()` at the end will time out — assertions don't complete the
+   test's `done` future on success.
 
 ---
 
