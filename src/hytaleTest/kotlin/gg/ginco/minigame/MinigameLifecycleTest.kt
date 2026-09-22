@@ -41,7 +41,7 @@ class MinigameLifecycleTest {
         return Players.admin(t, name)
     }
 
-    /** `/minigame create <gametype>` produces exactly one Waiting instance recording the gametype. */
+    /** `/minigame create <gametype>` produces exactly one Waiting instance recording the gametype and id #1. */
     @HytaleTest(timeoutSeconds = 60)
     fun createPutsInstanceInWaiting(t: HytaleTestHelper) {
         val alice = player(t)
@@ -59,6 +59,27 @@ class MinigameLifecycleTest {
                 )
                 t.assertEquals(Phase.waiting(), MinigameTestHarness.phaseOf(store, controllers[0]),
                     "fresh instance must be in Waiting")
+                t.assertEquals(true, (MinigameTestHarness.instanceIdOf(store, controllers[0]) ?: 0) > 0,
+                    "instance must carry a positive instance id")
+            }
+        }
+    }
+
+    /** Instances get unique, strictly increasing per-boot ids. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun createAssignsSequentialInstanceIds(t: HytaleTestHelper) {
+        val alice = player(t)
+        alice.runCommand("minigame create a").join()
+        alice.runCommand("minigame create b").join()
+
+        t.succeedWhen {
+            t.runOnWorld {
+                val store = MinigameTestHarness.storeOf(t.world)
+                val ids = MinigameTestHarness.controllers(store)
+                    .mapNotNull { MinigameTestHarness.instanceIdOf(store, it) }
+                    .sorted()
+                t.assertEquals(2, ids.size, "two creates must yield two instances")
+                t.assertTrue(ids[0] < ids[1], "ids must be unique and increasing, got $ids")
             }
         }
     }
@@ -230,6 +251,13 @@ class MinigameLifecycleTest {
         alice.runCommand("minigame join").join()
         alice.runCommand("minigame status").join()
 
+        val arenaId = t.runOnWorldReturning {
+            val store = MinigameTestHarness.storeOf(t.world)
+            MinigameTestHarness.instanceIdOf(store, MinigameTestHarness.controllerOfGameType(store, "arena")!!)
+        }
+        t.assertTrue(alice.sawMessage("#$arenaId gameType=arena"),
+            "status should list the instance with its id, got: ${alice.receivedMessages()}")
+
         // status has no store side effects; verify what it *counts* directly.
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(t.world)
@@ -285,8 +313,8 @@ class MinigameLifecycleTest {
 
         val created = alice.drainReceivedMessages()
         t.assertTrue(
-            created.contains("Created minigame instance (gameType=arena, phase=Waiting)."),
-            "create should confirm the instance, got: $created"
+            created.any { it.startsWith("Created instance #") && "gameType=arena, phase=Waiting" in it },
+            "create should confirm the instance and its id, got: $created"
         )
 
         alice.runCommand("minigame join").join()
@@ -311,9 +339,162 @@ class MinigameLifecycleTest {
 
         alice.runCommand("minigame start --seconds=9").join()
         t.assertTrue(
-            alice.sawMessage("Started 1 instance(s) — 9.0 s countdown."),
+            alice.sawMessage("Started 1 instance(s) (all waiting instances) — 9.0 s countdown."),
             "start should confirm the countdown, got: ${alice.receivedMessages()}"
         )
+        t.succeed()
+    }
+
+    /** `join --game=<id>` joins the named instance, not just any. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun joinTargetsSpecificInstance(t: HytaleTestHelper) {
+        val alice = player(t)
+        alice.runCommand("minigame create one").join()
+        alice.runCommand("minigame create two").join()
+
+        val world = t.world
+        val twoId = t.runOnWorldReturning {
+            val store = MinigameTestHarness.storeOf(world)
+            MinigameTestHarness.instanceIdOf(store, MinigameTestHarness.controllerOfGameType(store, "two")!!)
+        }
+        alice.runCommand("minigame join --game=$twoId").join()
+
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val ref = MinigameTestHarness.refOf(alice.ref())
+            val target = MinigameTestHarness.inMinigameOf(store, ref)?.controllerRef
+            t.assertNotNull(target, "join should tag the player")
+            t.assertEquals(twoId, target?.let { MinigameTestHarness.instanceIdOf(store, it) },
+                "membership must reference the targeted instance")
+        }
+        t.succeed()
+    }
+
+    /** `join` without --game falls back to the lowest-id joinable instance. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun joinWithoutTargetUsesLowestJoinable(t: HytaleTestHelper) {
+        val alice = player(t)
+        alice.runCommand("minigame create z-first").join()
+        alice.runCommand("minigame create a-second").join()
+
+        val world = t.world
+        val firstId = t.runOnWorldReturning {
+            val store = MinigameTestHarness.storeOf(world)
+            MinigameTestHarness.instanceIdOf(store, MinigameTestHarness.controllerOfGameType(store, "z-first")!!)
+        }
+        val secondId = t.runOnWorldReturning {
+            val store = MinigameTestHarness.storeOf(world)
+            MinigameTestHarness.instanceIdOf(store, MinigameTestHarness.controllerOfGameType(store, "a-second")!!)
+        }
+        t.assertTrue(firstId!! < secondId!!, "creation order must assign increasing ids")
+
+        alice.runCommand("minigame join").join()
+
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val ref = MinigameTestHarness.refOf(alice.ref())
+            val target = MinigameTestHarness.inMinigameOf(store, ref)?.controllerRef
+            t.assertNotNull(target, "join should tag the player")
+            t.assertEquals(firstId, target?.let { MinigameTestHarness.instanceIdOf(store, it) },
+                "untargeted join must fall back to the lowest-id joinable instance")
+        }
+        t.succeed()
+    }
+
+    /** `--game` guards: unknown ids are rejected; non-joinable instances are skipped by the fallback. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun joinRejectsUnknownAndNonJoinableInstances(t: HytaleTestHelper) {
+        val alice = player(t)
+        alice.runCommand("minigame create one").join()
+        alice.runCommand("minigame create two").join()
+        alice.runCommand("minigame start").join()
+
+        val world = t.world
+        val oneId = t.runOnWorldReturning {
+            val store = MinigameTestHarness.storeOf(world)
+            MinigameTestHarness.instanceIdOf(store, MinigameTestHarness.controllerOfGameType(store, "one")!!)
+        }
+        alice.runCommand("minigame stop --game=$oneId").join() // "one" -> Ending(FORCED), not joinable
+
+        alice.runCommand("minigame join --game=999999").join()
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val ref = MinigameTestHarness.refOf(alice.ref())
+            t.assertEquals(null, MinigameTestHarness.inMinigameOf(store, ref),
+                "join with an unknown instance id must not tag the player")
+        }
+        t.assertTrue(alice.sawMessage("Instance #999999 does not exist or is not joinable"),
+            "unknown id should be named in the rejection, got: ${alice.receivedMessages()}")
+
+        // Fallback skips the Ending instance and joins "two" (Countdown is joinable).
+        alice.runCommand("minigame join").join()
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val ref = MinigameTestHarness.refOf(alice.ref())
+            val target = MinigameTestHarness.inMinigameOf(store, ref)?.controllerRef
+            t.assertEquals(
+                MinigameTestHarness.instanceIdOf(store, MinigameTestHarness.controllerOfGameType(store, "two")!!),
+                target?.let { MinigameTestHarness.instanceIdOf(store, it) },
+                "fallback join must skip the Ending instance and pick the other one"
+            )
+        }
+        t.succeed()
+    }
+
+    /** `start --game=<id>` starts only the named instance. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun startTargetsSpecificInstance(t: HytaleTestHelper) {
+        val alice = player(t)
+        alice.runCommand("minigame create one").join()
+        alice.runCommand("minigame create two").join()
+
+        val world = t.world
+        val oneId = t.runOnWorldReturning {
+            val store = MinigameTestHarness.storeOf(world)
+            MinigameTestHarness.instanceIdOf(store, MinigameTestHarness.controllerOfGameType(store, "one")!!)
+        }
+        alice.runCommand("minigame start --game=$oneId --seconds=30").join()
+
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val one = MinigameTestHarness.controllerOfGameType(store, "one")!!
+            val two = MinigameTestHarness.controllerOfGameType(store, "two")!!
+            t.assertEquals(Phase.Kind.COUNTDOWN, MinigameTestHarness.phaseOf(store, one)?.kind,
+                "targeted instance must be counting down")
+            t.assertEquals(Phase.Kind.WAITING, MinigameTestHarness.phaseOf(store, two)?.kind,
+                "the other instance must stay Waiting")
+        }
+        t.assertTrue(alice.sawMessage("Started 1 instance(s) (instance #$oneId)"),
+            "start should name the targeted instance, got: ${alice.receivedMessages()}")
+        t.succeed()
+    }
+
+    /** `stop --game=<id>` ends only the named instance; others keep running. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun stopTargetsSpecificInstance(t: HytaleTestHelper) {
+        val alice = player(t)
+        alice.runCommand("minigame create one").join()
+        alice.runCommand("minigame create two").join()
+
+        val world = t.world
+        val ids = t.runOnWorldReturning {
+            val store = MinigameTestHarness.storeOf(world)
+            mapOf(
+                "one" to MinigameTestHarness.instanceIdOf(store, MinigameTestHarness.controllerOfGameType(store, "one")!!),
+                "two" to MinigameTestHarness.instanceIdOf(store, MinigameTestHarness.controllerOfGameType(store, "two")!!)
+            )
+        }
+        alice.runCommand("minigame start --game=${ids["one"]}").join()
+        alice.runCommand("minigame stop --game=${ids["two"]}").join()
+
+        t.succeedWhen {
+            t.runOnWorld {
+                val store = MinigameTestHarness.storeOf(world)
+                val remaining = MinigameTestHarness.controllers(store)
+                    .mapNotNull { MinigameTestHarness.instanceIdOf(store, it) }
+                t.assertEquals(listOf(ids["one"]), remaining, "only the targeted instance should be gone after stop")
+            }
+        }
         t.succeed()
     }
 }

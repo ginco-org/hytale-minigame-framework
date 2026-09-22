@@ -8,6 +8,7 @@ import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.DeathZone
 import gg.ginco.minigame.component.Goal
 import gg.ginco.minigame.component.InMinigame
+import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.RegionName
 import gg.ginco.minigame.component.RegionTeamOwner
@@ -36,6 +37,7 @@ object Components {
 
         ControllerComponent.componentType = registry.registerComponent(ControllerComponent::class.java) { ControllerComponent() }
         InMinigame.componentType = registry.registerComponent(InMinigame::class.java) { InMinigame() }
+        InstanceId.componentType = registry.registerComponent(InstanceId::class.java) { InstanceId() }
 
         TeamData.componentType = registry.registerComponent(TeamData::class.java) { TeamData() }
         TeamRef.componentType = registry.registerComponent(TeamRef::class.java) { TeamRef() }

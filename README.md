@@ -22,21 +22,27 @@
 
 ## Status
 
-First vertical slice implemented:
+Second vertical slice implemented:
 
 - All components registered runtime-only in `Plugin.setup()` via `Components`
   (instances/teams/markers are transient; durable config will move to assets later)
 - `PhaseSystem` (ECS `TickingSystem`) drives `Waiting -> Countdown -> Playing -> Ending -> cleanup`
   per world tick and releases players when an instance is removed
-- `/minigame` command tree: `create <gametype>`, `start [secs]`, `stop`, `status`,
-  `join`, `leave` (admin commands gated to `hytale:Admin`)
+- `/minigame` command tree (admin commands gated to `hytale:Admin`):
+  - `create <gametype>` — creates an instance with a per-boot numeric id (#1, #2, ...)
+  - `start [--game=<id>] [--seconds=<secs>]` — starts all Waiting instances or one
+  - `stop [--game=<id>]` — forced stop with the default ending grace period
+  - `status` — `#<id> gameType=... phase=... players=...` per instance
+  - `join [--game=<id>]` — joins a specific instance or the lowest-id joinable
+  - `leave`
+- Integration tests: 16 `@HytaleTest` suites-methods run inside a real server
+  via [hytest](https://github.com/ginco-org/hytest) (`./gradlew hytaleTest`);
+  hytest loads the real plugin from the merged test jar (SubPlugins manifest),
+  so nothing about the framework is stubbed or re-mounted in the harness.
 
-Verified: plugin loads, registers components/systems/commands and shuts down cleanly
-on a live server (`run/HytaleServer.jar --assets Assets.zip --bare`).
-
-Not yet verified live: phase ticking and join/leave with a connected client —
-the local server jar is 0.5.3 (worldgen crashes with the current Assets.zip);
-use `./gradlew runServer` (requires OAuth device login) to get a matching 0.6.8 server.
+Verified on a live server: plugin loads and registers components/systems/
+commands, phase ticking drives the full lifecycle, join/leave guards, targeted
+and untargeted instance commands, and command response text assertions.
 
 ### Next up
 

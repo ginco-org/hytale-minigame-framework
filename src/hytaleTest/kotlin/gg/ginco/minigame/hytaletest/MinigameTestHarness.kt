@@ -11,6 +11,7 @@ import com.hypixel.hytale.server.core.universe.world.World
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
+import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.command.MinigameCommand
@@ -62,6 +63,9 @@ object MinigameTestHarness {
     fun roleOf(store: Store<EntityStore>, ref: Ref<EntityStore>): Role? =
         store.getComponent(ref, Role.componentType)
 
+    fun instanceIdOf(store: Store<EntityStore>, ref: Ref<EntityStore>): Int? =
+        store.getComponent(ref, InstanceId.componentType)?.value
+
     /** Every controller entity in [store]. */
     fun controllers(store: Store<EntityStore>): List<Ref<EntityStore>> {
         val out = mutableListOf<Ref<EntityStore>>()
@@ -73,9 +77,13 @@ object MinigameTestHarness {
                     }
                 }
             }
-        store.forEachChunk(MinigameCommand.CONTROLLERS_WITH_PHASE, consumer)
+        store.forEachChunk(MinigameCommand.CONTROLLERS, consumer)
         return out
     }
+
+    /** The controller entity created with [gameTypeId], or null. */
+    fun controllerOfGameType(store: Store<EntityStore>, gameTypeId: String): Ref<EntityStore>? =
+        controllers(store).firstOrNull { controllerOf(store, it)?.gameTypeId == gameTypeId }
 
     /** Entity ref for a simulated player (fails the test if the player is not in a world). */
     fun refOf(player: PlayerRef): Ref<EntityStore> = player.reference ?: error("player is not in a world")
