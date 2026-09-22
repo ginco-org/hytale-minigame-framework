@@ -26,43 +26,52 @@ import java.util.function.BiConsumer
  * When an instance is removed, its players are released (InMinigame + Role stripped)
  * so nobody is stuck referencing a dead controller.
  *
- * Transitions are phase-component swaps: same component type, so the archetype is
- * stable and in-place replacement during chunk iteration is safe.
+ * Transitions are phase-component swaps: same component type ([Phase] is one
+ * concrete class; only its [Phase.Kind] changes), so the archetype is stable.
+ *
+ * ## Writes must go through the CommandBuffer
+ *
+ * Inside the `forEachChunk` consumer the store's processing lock is held, so
+ * `store.replaceComponent` etc. throw "Store is currently processing". The
+ * ECS hands systems a [CommandBuffer] for exactly this: buffer the write, and
+ * it is applied when the scan returns (buffer `consume()` at end of tick/scan).
+ * The cleanup pass after the scan runs outside the lock, so plain `Store`
+ * writes are legal there.
  */
 class PhaseSystem : TickingSystem<EntityStore>() {
 
     override fun tick(dt: Float, systemIndex: Int, store: Store<EntityStore>) {
         val finished = mutableListOf<Ref<EntityStore>>()
 
-        val scanControllers = BiConsumer { chunk: ArchetypeChunk<EntityStore>, _: CommandBuffer<EntityStore> ->
+        val scanControllers = BiConsumer { chunk: ArchetypeChunk<EntityStore>, buffer: CommandBuffer<EntityStore> ->
             for (i in 0 until chunk.size()) {
                 val ref = chunk.getReferenceTo(i)
                 val phase = chunk.getComponent(i, Phase.componentType) ?: continue
 
-                when (phase) {
-                    is Phase.Countdown -> {
-                        val remaining = phase.remainingSeconds - dt
+                when (phase.kind) {
+                    Phase.Kind.COUNTDOWN -> {
+                        val remaining = phase.seconds - dt
                         if (remaining <= 0f) {
-                            store.replaceComponent(ref, Phase.componentType, Phase.Playing())
+                            buffer.replaceComponent(ref, Phase.componentType, Phase.playing())
                             PlayerSet(store, ref).sendMessage(Message.raw("The minigame has started!"))
                         } else {
-                            store.replaceComponent(ref, Phase.componentType, Phase.Countdown(remaining))
+                            buffer.replaceComponent(ref, Phase.componentType, Phase.countdown(remaining))
                         }
                     }
 
-                    is Phase.Playing ->
-                        store.replaceComponent(ref, Phase.componentType, Phase.Playing(phase.elapsedSeconds + dt))
+                    Phase.Kind.PLAYING ->
+                        buffer.replaceComponent(ref, Phase.componentType, Phase.playing(phase.seconds + dt))
 
-                    is Phase.Ending -> {
-                        val remaining = phase.remainingSeconds - dt
+                    Phase.Kind.ENDING -> {
+                        val remaining = phase.seconds - dt
                         if (remaining <= 0f) {
                             finished.add(ref)
                         } else {
-                            store.replaceComponent(ref, Phase.componentType, Phase.Ending(phase.reason, remaining))
+                            buffer.replaceComponent(ref, Phase.componentType, Phase.ending(phase.reason, remaining))
                         }
                     }
 
-                    Phase.Waiting, Phase.Cleanup -> {}
+                    Phase.Kind.WAITING, Phase.Kind.CLEANUP -> {}
                 }
             }
         }

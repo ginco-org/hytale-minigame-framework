@@ -31,8 +31,8 @@ import gg.ginco.minigame.component.TeamRef
 object Components {
 
     fun register(registry: ComponentRegistryProxy<EntityStore>) {
-        Phase.componentType = registry.registerComponent(Phase::class.java) { Phase.Countdown(0f) }
-        Role.componentType = registry.registerComponent(Role::class.java) { Role.Participant }
+        Phase.componentType = registry.registerComponent(Phase::class.java) { Phase.countdown(0f) }
+        Role.componentType = registry.registerComponent(Role::class.java) { Role.participant() }
 
         ControllerComponent.componentType = registry.registerComponent(ControllerComponent::class.java) { ControllerComponent() }
         InMinigame.componentType = registry.registerComponent(InMinigame::class.java) { InMinigame() }

@@ -31,8 +31,11 @@ import java.util.function.BiConsumer
  * Typical flow:
  * ```
  * /minigame create mygame   (admin)  -> instance in Waiting
- * /minigame join            (player) -> tag player with InMinigame + Role.Participant
- * /minigame start [secs]    (admin)  -> Waiting -> Countdown -> (PhaseSystem) -> Playing
+ * /minigame join            (player) -> tag player with InMinigame + Role.participant()
+ * /minigame start --seconds=<secs>  (admin) -> Waiting -> Countdown -> (PhaseSystem) -> Playing
+ *                                    (optional args are NAMED in hytale's command
+ *                                    system: `--seconds=7` — a bare positional "7"
+ *                                    fails to parse and the command never runs)
  * /minigame stop            (admin)  -> Ending(FORCED) -> (PhaseSystem) cleanup
  * /minigame status          (anyone) -> list instances
  * /minigame leave           (player)
@@ -71,7 +74,7 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
     }
 }
 
-/** Creates a new minigame instance entity in the [Phase.Waiting] state. */
+/** Creates a new minigame instance entity in the waiting phase. */
 class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.desc") {
 
     private val gameTypeArg = withRequiredArg("gametype", "minigame.commands.create.gametype.desc", ArgTypes.STRING)
@@ -96,7 +99,7 @@ class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.d
         @Suppress("UNCHECKED_CAST")
         val components = arrayOfNulls<Component<EntityStore>>(archetype.length())
         components[ControllerComponent.componentType.index] = ControllerComponent(gameTypeId = gameTypeId)
-        components[Phase.componentType.index] = Phase.Waiting
+        components[Phase.componentType.index] = Phase.waiting()
         val holder = store.registry.newHolder(archetype, components as Array<Component<EntityStore>>)
         val ref = store.addEntity(holder, AddReason.SPAWN)
         if (ref == null) {
@@ -108,7 +111,7 @@ class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.d
     }
 }
 
-/** Moves every Waiting instance into [Phase.Countdown]; [gg.ginco.minigame.system.PhaseSystem] takes over from there. */
+/** Moves every waiting instance into the countdown phase; [gg.ginco.minigame.system.PhaseSystem] takes over from there. */
 class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc") {
 
     private val secondsArg = withDefaultArg(
@@ -122,17 +125,22 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
 
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
         val countdownSeconds = secondsArg.get(context).toFloat()
-        var started = 0
 
+        // Scan first, mutate after: store writes are illegal while forEachChunk
+        // holds the processing lock ("Store is currently processing"), and any
+        // throw here is swallowed by the async-command wrapper (logged only).
+        val waiting = mutableListOf<Ref<EntityStore>>()
         store.forEachChunk(MinigameCommand.CONTROLLERS_WITH_PHASE, MinigameCommand.controllerScanner { chunk, i ->
-            if (chunk.getComponent(i, Phase.componentType) is Phase.Waiting) {
-                store.replaceComponent(chunk.getReferenceTo(i), Phase.componentType, Phase.Countdown(countdownSeconds))
-                started++
+            if (chunk.getComponent(i, Phase.componentType)?.kind == Phase.Kind.WAITING) {
+                waiting.add(chunk.getReferenceTo(i))
             }
         })
+        for (ref in waiting) {
+            store.replaceComponent(ref, Phase.componentType, Phase.countdown(countdownSeconds))
+        }
 
         context.sendMessage(
-            if (started > 0) Message.raw("Started $started instance(s) — $countdownSeconds s countdown.")
+            if (waiting.isNotEmpty()) Message.raw("Started ${waiting.size} instance(s) — $countdownSeconds s countdown.")
             else Message.raw("No instances in Waiting phase. Use /minigame create first.")
         )
     }
@@ -142,7 +150,7 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
     }
 }
 
-/** Forces every live instance into [Phase.Ending] with [gg.ginco.minigame.component.EndReason.FORCED]. */
+/** Forces every live instance into the ending phase with [gg.ginco.minigame.component.EndReason.FORCED]. */
 class StopCommand : AbstractWorldCommand("stop", "minigame.commands.stop.desc") {
 
     init {
@@ -150,21 +158,23 @@ class StopCommand : AbstractWorldCommand("stop", "minigame.commands.stop.desc") 
     }
 
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
-        var stopped = 0
-
+        // Scan first, mutate after (see StartCommand — store writes are illegal
+        // inside the forEachChunk processing window).
+        val live = mutableListOf<Ref<EntityStore>>()
         store.forEachChunk(MinigameCommand.CONTROLLERS_WITH_PHASE, MinigameCommand.controllerScanner { chunk, i ->
-            when (chunk.getComponent(i, Phase.componentType)) {
-                is Phase.Waiting, is Phase.Countdown, is Phase.Playing -> {
-                    store.replaceComponent(chunk.getReferenceTo(i), Phase.componentType, Phase.Ending(EndReason.FORCED, 0f))
-                    stopped++
-                }
+            when (chunk.getComponent(i, Phase.componentType)?.kind) {
+                Phase.Kind.WAITING, Phase.Kind.COUNTDOWN, Phase.Kind.PLAYING ->
+                    live.add(chunk.getReferenceTo(i))
 
                 else -> {}
             }
         })
+        for (ref in live) {
+            store.replaceComponent(ref, Phase.componentType, Phase.ending(EndReason.FORCED, 0f))
+        }
 
         context.sendMessage(
-            if (stopped > 0) Message.raw("Stopped $stopped instance(s).")
+            if (live.isNotEmpty()) Message.raw("Stopped ${live.size} instance(s).")
             else Message.raw("No running instances.")
         )
     }
@@ -189,11 +199,11 @@ class StatusCommand : AbstractWorldCommand("status", "minigame.commands.status.d
         )
     }
 
-    private fun describe(phase: Phase): String = when (phase) {
-        is Phase.Countdown -> "Countdown(${phase.remainingSeconds.toInt()}s)"
-        is Phase.Playing -> "Playing(${phase.elapsedSeconds.toInt()}s)"
-        is Phase.Ending -> "Ending(${phase.reason}, ${phase.remainingSeconds.toInt()}s)"
-        else -> phase::class.simpleName ?: "Unknown"
+    private fun describe(phase: Phase): String = when (phase.kind) {
+        Phase.Kind.COUNTDOWN -> "Countdown(${phase.seconds.toInt()}s)"
+        Phase.Kind.PLAYING -> "Playing(${phase.seconds.toInt()}s)"
+        Phase.Kind.ENDING -> "Ending(${phase.reason}, ${phase.seconds.toInt()}s)"
+        else -> phase.kind.name.lowercase().replaceFirstChar { it.uppercase() }
     }
 }
 
@@ -219,7 +229,7 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
         }
 
         store.addComponent(ref, InMinigame.componentType, InMinigame(target))
-        store.addComponent(ref, Role.componentType, Role.Participant)
+        store.addComponent(ref, Role.componentType, Role.participant())
 
         PlayerSet(store, target).sendMessage(Message.raw("${playerRef.username} joined the minigame."))
     }
@@ -227,8 +237,8 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
     private fun findJoinableInstance(store: Store<EntityStore>): Ref<EntityStore>? {
         var target: Ref<EntityStore>? = null
         store.forEachChunk(MinigameCommand.CONTROLLERS_WITH_PHASE, MinigameCommand.controllerScanner { chunk, i ->
-            when (chunk.getComponent(i, Phase.componentType)) {
-                is Phase.Waiting, is Phase.Countdown ->
+            when (chunk.getComponent(i, Phase.componentType)?.kind) {
+                Phase.Kind.WAITING, Phase.Kind.COUNTDOWN ->
                     if (target == null) target = chunk.getReferenceTo(i)
 
                 else -> {}

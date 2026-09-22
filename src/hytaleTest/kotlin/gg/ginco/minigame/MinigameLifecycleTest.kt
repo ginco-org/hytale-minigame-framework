@@ -16,15 +16,14 @@ import gg.ginco.minigame.hytaletest.Players
  * [gg.ginco.minigame.system.PhaseSystem], the `/minigame` command tree) is
  * mounted once per server run by [MinigameTestHarness].
  *
- * ## KNOWN BLOCKER (framework bug, see handoff.md)
+ * ## Component model note
  *
- * `Phase` and `Role` are sealed interfaces; the server ECS validates a stored
- * component instance by exact class equality with the class passed to
- * `registerComponent` ("expected interface ...Phase but found class
- * ...Phase$Waiting"). No subtype instance can therefore ever be stored, so
- * `/minigame create` cannot materialise an instance. The tests that depend on
- * entity creation fail with that root cause until `Phase`/`Role` become
- * concrete classes (or are registered per concrete type).
+ * `Phase` and `Role` are single concrete data classes with a [Phase.Kind] /
+ * [Role.Kind] enum plus payload fields — the server ECS validates stored
+ * components by exact class equality with the class passed to
+ * `registerComponent`, so sealed subtypes could never pass validation (see
+ * handoff.md). Phase transitions swap the same component type with a new
+ * [Phase.Kind], keeping the archetype stable.
  *
  * Commands are executed through the real `CommandManager.handleCommand` path via
  * `SimulatedPlayer.runCommand` (leading `/` optional). Assertions read the store
@@ -56,13 +55,13 @@ class MinigameLifecycleTest {
                     MinigameTestHarness.controllerOf(store, controllers[0])?.gameTypeId,
                     "instance should record the gametype argument"
                 )
-                t.assertEquals(Phase.Waiting, MinigameTestHarness.phaseOf(store, controllers[0]),
+                t.assertEquals(Phase.waiting(), MinigameTestHarness.phaseOf(store, controllers[0]),
                     "fresh instance must be in Waiting")
             }
         }
     }
 
-    /** `join` tags the player with InMinigame(controllerRef) + Role.Participant; `leave` strips both. */
+    /** `join` tags the player with InMinigame(controllerRef) + participant Role; `leave` strips both. */
     @HytaleTest(timeoutSeconds = 60)
     fun joinAndLeaveTagAndUntagPlayer(t: HytaleTestHelper) {
         val alice = player(t)
@@ -81,8 +80,8 @@ class MinigameLifecycleTest {
                     MinigameTestHarness.controllers(store).contains(controllerRef),
                     "InMinigame.controllerRef should point at a live controller entity"
                 )
-                t.assertEquals(Role.Participant, MinigameTestHarness.roleOf(store, ref),
-                    "player should be tagged Role.Participant")
+                t.assertEquals(Role.participant(), MinigameTestHarness.roleOf(store, ref),
+                    "player should be tagged as participant")
             }
         }
 
@@ -137,14 +136,14 @@ class MinigameLifecycleTest {
     fun startDrivesWaitingToCountdownToPlaying(t: HytaleTestHelper) {
         val alice = player(t)
         alice.runCommand("minigame create race").join()
-        alice.runCommand("minigame start 2").join()
+        alice.runCommand("minigame start --seconds=2").join()
 
         val world = t.world
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(world)
             val ref = MinigameTestHarness.controllers(store).single()
             val phase = MinigameTestHarness.phaseOf(store, ref)
-            t.assertTrue(phase is Phase.Countdown,
+            t.assertEquals(Phase.Kind.COUNTDOWN, phase?.kind,
                 "right after `start` the instance must be Countdown, got $phase")
         }
 
@@ -155,7 +154,7 @@ class MinigameLifecycleTest {
                 val store = MinigameTestHarness.storeOf(world)
                 val ref = MinigameTestHarness.controllers(store).single()
                 val phase = MinigameTestHarness.phaseOf(store, ref)
-                t.assertTrue(phase is Phase.Playing,
+                t.assertEquals(Phase.Kind.PLAYING, phase?.kind,
                     "instance should reach Playing, got $phase (tick=${t.tick()})")
             }
         }
@@ -167,7 +166,7 @@ class MinigameLifecycleTest {
         val alice = player(t)
         alice.runCommand("minigame create race").join()
         alice.runCommand("minigame join").join()
-        alice.runCommand("minigame start 30").join()
+        alice.runCommand("minigame start --seconds=30").join()
 
         val world = t.world
         // Wait for Playing first so `stop` hits the Playing branch.
@@ -176,7 +175,8 @@ class MinigameLifecycleTest {
                 val store = MinigameTestHarness.storeOf(world)
                 val ref = MinigameTestHarness.controllers(store).singleOrNull()
                 t.assertNotNull(ref, "instance should still exist before stop")
-                t.assertTrue(MinigameTestHarness.phaseOf(store, ref!!) is Phase.Playing, "should be Playing")
+                t.assertEquals(Phase.Kind.PLAYING, MinigameTestHarness.phaseOf(store, ref!!)?.kind,
+                    "should be Playing")
             }
         }
 
@@ -188,7 +188,7 @@ class MinigameLifecycleTest {
             val ref = MinigameTestHarness.controllers(store).singleOrNull()
             val phase = ref?.let { MinigameTestHarness.phaseOf(store, it) }
             t.assertTrue(
-                phase is Phase.Ending && (phase as Phase.Ending).reason == EndReason.FORCED,
+                phase?.kind == Phase.Kind.ENDING && phase?.reason == EndReason.FORCED,
                 "right after stop the instance must be Ending(FORCED), got $phase"
             )
         }
@@ -255,7 +255,7 @@ class MinigameLifecycleTest {
         val bob = player(t, "Bob")
         alice.runCommand("minigame create lobby").join()
         alice.runCommand("minigame join").join()
-        alice.runCommand("minigame start 5").join()
+        alice.runCommand("minigame start --seconds=5").join()
         bob.runCommand("minigame join").join()
 
         val world = t.world
@@ -266,7 +266,7 @@ class MinigameLifecycleTest {
                 MinigameTestHarness.inMinigameOf(store, MinigameTestHarness.refOf(it.ref())) != null
             }
             t.assertEquals(2, joined, "both players should be members during Countdown")
-            t.assertTrue(MinigameTestHarness.phaseOf(store, controller) is Phase.Countdown,
+            t.assertEquals(Phase.Kind.COUNTDOWN, MinigameTestHarness.phaseOf(store, controller)?.kind,
                 "should still be counting down")
         }
         t.succeed()
