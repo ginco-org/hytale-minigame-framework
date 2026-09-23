@@ -83,13 +83,21 @@ jobs:
       # Server files (jar 110MB + Assets.zip 3.3GB) cached by version — the
       # authenticated R2 download only happens on version bump or cold cache.
       - name: Restore Hytale server files
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/.gradle/caches/hygradle/server
           key: hytale-server-0.6.8-${{ github.run_id }}
           restore-keys: |
             hytale-server-0.6.8-
             hytale-server-
+      # Save even when the suite fails — otherwise every red run also pays
+      # the 3.3GB authenticated download again.
+      - name: Save Hytale server files
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.gradle/caches/hygradle/server
+          key: hytale-server-0.6.8-${{ github.run_id }}
       - name: Check for Hytale token secret
         id: token
         env:

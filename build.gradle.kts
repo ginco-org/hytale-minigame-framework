@@ -30,8 +30,9 @@ hytale {
 hytest {
     // Forward the server's own logs while debugging a failing test.
     showServerLogs = providers.gradleProperty("hytestLogs").isPresent
-    // CI runners are 2-core: boot + 41 fresh worlds can exceed the 300s
-    // default. A cap, not a delay — local runs are unaffected.
-    timeoutSeconds = 900
+    // CI runners are 2-core: boot + 41 fresh worlds measured ~25s/test on
+    // ubuntu-latest (~15x local) — the whole suite needs >900s there.
+    // A cap, not a delay — local runs are unaffected.
+    timeoutSeconds = 1800
     firstFrameGraceSeconds = 180
 }
