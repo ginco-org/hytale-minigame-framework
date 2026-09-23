@@ -19,6 +19,12 @@ on:
 permissions:
   contents: read
 
+# The Hytale refresh token is use-once rotated (see hytest's ci.yml rationale):
+# serialize integration runs and carry the rotated token forward via the cache.
+concurrency:
+  group: hytale-token-rotation
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build (plugin + test sources)
@@ -55,6 +61,15 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
+      # Rotation chain: restore the LATEST cached token, save the rotated one
+      # at job end (see hytest's ci.yml for the full rationale).
+      - name: Restore Hytale token
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/hygradle/token.json
+          key: hytale-downloader-token-${{ github.run_id }}
+          restore-keys: |
+            hytale-downloader-token-
       - name: Check for Hytale token secret
         id: token
         env:
