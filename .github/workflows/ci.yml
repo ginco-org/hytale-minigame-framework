@@ -66,13 +66,18 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "HYTALE_TOKEN_JSON not set — skipping integration tests."
           fi
-      - name: Install Hytale token for hytest
+      - name: Install Hytale downloader token
         if: steps.token.outputs.available == 'true'
         env:
           HYTALE_TOKEN_JSON: ${{ secrets.HYTALE_TOKEN_JSON }}
         run: |
           mkdir -p ~/.local/share/hygradle
-          printf '%s' "$HYTALE_TOKEN_JSON" > ~/.local/share/hygradle/token-server.json
+          # The DOWNLOADER token (token.json) is what CI actually needs:
+          # provisionServer downloads the server + Assets through it and
+          # auto-refreshes expired access tokens (HytaleAuth.getAccessToken).
+          # Session tokens (token-server.json) are optional — the server runs
+          # and the suite passes without them.
+          printf '%s' "$HYTALE_TOKEN_JSON" > ~/.local/share/hygradle/token.json
       - name: Run integration suite
         if: steps.token.outputs.available == 'true'
         run: ./gradlew hytaleTest
