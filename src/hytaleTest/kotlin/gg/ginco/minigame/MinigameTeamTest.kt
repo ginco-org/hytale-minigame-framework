@@ -158,8 +158,8 @@ class MinigameTeamTest {
             val ref = MinigameTestHarness.refOf(alice.ref())
             t.assertEquals(null, store.getComponent(ref, TeamRef.componentType), "TeamRef must be gone")
         }
-        t.assertTrue(alice.sawMessage("Alice left team 'red'."),
-            "leave should announce to the leaver, got: ${alice.receivedMessages()}")
+        t.assertTrue(alice.sawMessage("You left team 'red'."),
+            "leave should confirm to the leaver, got: ${alice.receivedMessages()}")
 
         alice.runCommand("minigame team join red").join()
         t.assertEquals(1, rosterSize(t, instanceId, "red"), "rejoining after leaving should work")
@@ -176,7 +176,7 @@ class MinigameTeamTest {
         alice.runCommand("minigame team create red").join()
         alice.runCommand("minigame join").join()
         bob.runCommand("minigame join --game=$twoId").join()
-        bob.runCommand("minigame team create red").join() // bob is admin too; team on HIS instance
+        bob.runCommand("minigame team create red --game=$twoId").join() // team on HIS instance
         bob.runCommand("minigame team join red").join()
 
         t.assertEquals(1, rosterSize(t, twoId, "red"), "bob should be in instance #two's red team")

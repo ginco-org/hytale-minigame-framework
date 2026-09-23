@@ -68,6 +68,7 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
         addSubCommand(JoinCommand())
         addSubCommand(LeaveCommand())
         addSubCommand(TeamCommand())
+        addSubCommand(RegionCommand())
     }
 
     companion object {
@@ -484,10 +485,13 @@ class TeamLeaveCommand : AbstractPlayerCommand("leave", "minigame.commands.team.
         if (teamRef.isValid()) {
             val data = store.getComponent(teamRef, TeamData.componentType)
             val name = data?.name ?: "?"
-            store.getComponent(teamRef, TeamMembers.componentType)?.members?.remove(ref)
+            val members = store.getComponent(teamRef, TeamMembers.componentType)?.members
+            members?.remove(ref)
 
-            val members = store.getComponent(teamRef, TeamMembers.componentType)?.members ?: emptyList()
-            for (member in members) {
+            // Confirm to the leaver even when they were the last member;
+            // announce to whoever remains.
+            playerRef.sendMessage(Message.raw("You left team '$name'."))
+            for (member in members ?: emptyList()) {
                 val memberPlayer = store.getComponent(member, PlayerRef.getComponentType()) ?: continue
                 memberPlayer.sendMessage(Message.raw("${playerRef.username} left team '$name'."))
             }

@@ -62,6 +62,20 @@ Optional args in hytale's command system are NAMED: `/minigame start
 4. Gotcha for test authors: a test that neither uses `succeedWhen` nor calls
    `t.succeed()` at the end will time out — assertions don't complete the
    test's `done` future on success.
+5. Gotcha: `succeedWhen` is ASYNCHRONOUS — it returns immediately and polls
+   in the background. Any assertion placed AFTER a `succeedWhen` block runs
+   immediately, racing the condition. All post-state assertions belong
+   INSIDE the polled block; only `t.succeed()` goes after it.
+6. Gotcha: one server boots per suite (worlds are per-test, plugin statics
+   are shared). Per-boot counters (e.g. instance ids) advance across tests —
+   assert relative properties, never absolute values like "first instance
+   is #1".
+7. Gotcha: `SimulatedPlayer.runCommand` fails the future when the ROOT
+   command doesn't resolve (typo protection); permission denials and runtime
+   argument rejections still complete normally — assert them via
+   `receivedMessages()`.
+8. Gotcha: `playerRef.transform` can lag `TransformComponent` mutations —
+   read positions from the store's TransformComponent on the world thread.
 
 ---
 

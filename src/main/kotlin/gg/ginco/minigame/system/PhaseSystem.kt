@@ -8,6 +8,7 @@ import com.hypixel.hytale.component.RemoveReason
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.component.system.tick.TickingSystem
 import com.hypixel.hytale.server.core.Message
+import com.hypixel.hytale.server.core.universe.PlayerRef
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
@@ -15,7 +16,8 @@ import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamRef
 import gg.ginco.minigame.util.PlayerSet
-import gg.ginco.minigame.util.Teams
+import gg.ginco.minigame.util.SpawnPoints
+import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import java.util.function.BiConsumer
 
 /**
@@ -44,6 +46,7 @@ class PhaseSystem : TickingSystem<EntityStore>() {
 
     override fun tick(dt: Float, systemIndex: Int, store: Store<EntityStore>) {
         val finished = mutableListOf<Ref<EntityStore>>()
+        val started = mutableListOf<Ref<EntityStore>>()
 
         val scanControllers = BiConsumer { chunk: ArchetypeChunk<EntityStore>, buffer: CommandBuffer<EntityStore> ->
             for (i in 0 until chunk.size()) {
@@ -56,6 +59,7 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                         if (remaining <= 0f) {
                             buffer.replaceComponent(ref, Phase.componentType, Phase.playing())
                             PlayerSet(store, ref).sendMessage(Message.raw("The minigame has started!"))
+                            started.add(ref)
                         } else {
                             buffer.replaceComponent(ref, Phase.componentType, Phase.countdown(remaining))
                         }
@@ -80,6 +84,10 @@ class PhaseSystem : TickingSystem<EntityStore>() {
 
         store.forEachChunk(Archetype.of(ControllerComponent.componentType, Phase.componentType), scanControllers)
 
+        for (ref in started) {
+            teleportPlayersToSpawnPoints(store, ref)
+        }
+
         for (ref in finished) {
             val players = PlayerSet(store, ref).all()
             for (player in players) {
@@ -87,12 +95,41 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                 store.removeComponentIfExists(player, Role.componentType)
                 store.removeComponentIfExists(player, TeamRef.componentType)
             }
-            // Team entities carry InMinigame -> this controller; they must not
-            // outlive the instance.
-            for (team in Teams.of(store, ref)) {
-                store.removeEntity(team.ref, RemoveReason.REMOVE)
+            // Remove every non-player child entity linked to this instance
+            // (teams, spawn-point markers, future marker types) — they must
+            // not outlive it.
+            val children = mutableListOf<Ref<EntityStore>>()
+            val scanChildren = BiConsumer { chunk: ArchetypeChunk<EntityStore>, buffer: CommandBuffer<EntityStore> ->
+                for (i in 0 until chunk.size()) {
+                    val inMinigame = chunk.getComponent(i, InMinigame.componentType) ?: continue
+                    if (inMinigame.controllerRef != ref) continue
+                    if (chunk.getComponent(i, PlayerRef.getComponentType()) != null) continue
+                    children.add(chunk.getReferenceTo(i))
+                }
+            }
+            store.forEachChunk(Archetype.of(InMinigame.componentType), scanChildren)
+            for (child in children) {
+                store.removeEntity(child, RemoveReason.REMOVE)
             }
             store.removeEntity(ref, RemoveReason.REMOVE)
+        }
+    }
+
+    /**
+     * Teleports the instance's players to its spawn-point markers when the
+     * game starts: player i goes to marker `i % n` (creation order). With no
+     * markers players simply stay where they are. Runs after the scan, on the
+     * world thread, so direct [TransformComponent] mutation is legal.
+     */
+    private fun teleportPlayersToSpawnPoints(store: Store<EntityStore>, controllerRef: Ref<EntityStore>) {
+        val spawns = SpawnPoints.of(store, controllerRef)
+        if (spawns.isEmpty()) return
+
+        val players = PlayerSet(store, controllerRef).all()
+        for ((index, player) in players.withIndex()) {
+            val target = spawns[index % spawns.size].bounds.center()
+            val transform = store.getComponent(player, TransformComponent.getComponentType()) ?: continue
+            transform.teleportPosition(target)
         }
     }
 }
