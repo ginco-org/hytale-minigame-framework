@@ -2,7 +2,7 @@ pluginManagement {
     // hytest is not published yet — consume it as a local composite build.
     // Resolution order: a sibling checkout (../hytest — what CI uses, checking
     // out both repos side by side) then the supervisor machine's checkout.
-    val hytestDir = listOf(file("../hytest"), file("/home/agent/projects/hytest"))
+    val hytestDir = listOf(file("hytest"), file("../hytest"), file("/home/agent/projects/hytest"))
         .firstOrNull { it.resolve("settings.gradle.kts").exists() }
         ?: throw GradleException(
             "hytest not found: check out https://github.com/ginco-org/hytest " +
@@ -24,7 +24,7 @@ plugins {
 
 dependencyResolutionManagement {
     // Substitutes gg.ginco.hytest:runtime / :junit5 with the local build.
-    val hytestDir = listOf(file("../hytest"), file("/home/agent/projects/hytest"))
+    val hytestDir = listOf(file("hytest"), file("../hytest"), file("/home/agent/projects/hytest"))
         .firstOrNull { it.resolve("settings.gradle.kts").exists() }
         ?: throw GradleException(
             "hytest not found: check out https://github.com/ginco-org/hytest " +
