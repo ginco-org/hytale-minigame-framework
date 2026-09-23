@@ -111,3 +111,16 @@ ever be stored. Redesigned as single concrete classes.
 9. Marker types are open string ids (`RegionMarker.type`), NOT a fixed
    vocabulary — `/minigame region add <any-id>`; events carry `type: String`.
    Only `spawn` is reserved (framework start-of-game teleports).
+10. Disconnect pipeline ordering (verified in bytecode): `Universe.removePlayer`
+    dispatches `PlayerDisconnectEvent` BEFORE removing the entity — so the
+    framework's release handler still sees full membership, and must run
+    BEFORE the server's own removal task (sync on the world thread, else
+    `world.execute` keeps FIFO order). Post-disconnect the player ENTITY is
+    gone: assert releases via the TEAM ROSTER, never via `refOf(staleRef)`.
+11. Register event listeners in `Plugin.setup()`, not `start()` — start-time
+    registration does not feed the bus's `hasListener()` gate and the event
+    is silently skipped.
+12. `succeedWhen` is async (see 5) — the polished alternative is hytest's
+    `assertEventually(timeout) { }` which BLOCKS until the condition holds;
+    prefer it whenever the test must continue after the wait.
+

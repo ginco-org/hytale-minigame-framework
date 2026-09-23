@@ -45,6 +45,9 @@ Second vertical slice implemented:
   - disconnect semantics: a player who disconnects is released like
     `/minigame leave` (membership, team roster, presence) and remaining
     members are told — rejoin flows use hytest's fixed-identity reconnect
+  - disconnect semantics: a player who disconnects is released like
+    `/minigame leave` (membership, team roster, presence) and remaining
+    members are told — rejoin flows use hytest's fixed-identity reconnect
 
 ## Regions are data, not behaviour
 
