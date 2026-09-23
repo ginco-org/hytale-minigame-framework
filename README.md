@@ -40,9 +40,8 @@ Second vertical slice implemented:
     `TeamMembers` + `InMinigame` -> instance); players carry `TeamRef` -> team;
     names are unique per instance, not globally; instance cleanup releases
     teams and memberships
-  - `region spawn|goal|death|safe|capture [--game=<id>]`,
-    `region list [--game=<id>]`, `region clear [--type=<kind>]` — in-game
-    marker creation at your position
+  - `region add <type> [--game=<id>]`, `region list [--game=<id>]`,
+    `region clear [--type=<type>]` — in-game marker creation at your position
 
 ## Regions are data, not behaviour
 
@@ -54,7 +53,7 @@ them — killing players in death zones, scoring goals, capture progress are
 
 ```kotlin
 eventRegistry.register(PlayerEnterRegionEvent::class.java) { e ->
-    if (e.kind != RegionKind.DEATH) return@register
+    if (e.type != "death") return@register            // your own type ids
     val phase = entityStore.store.getComponent(e.instance, Phase.componentType)
     if (phase?.kind != Phase.Kind.PLAYING) return@register   // play-only rule
     entityStore.store.replaceComponent(
@@ -62,10 +61,12 @@ eventRegistry.register(PlayerEnterRegionEvent::class.java) { e ->
 }
 ```
 
-`Regions.markersOf(store, instance, kind)` / `markerAt(...)` are the query
-surface for plugin code. `spawn` markers are the one kind the framework acts
-on itself: they are the teleport targets when an instance starts.
-- Integration tests: 26 `@HytaleTest` methods run inside a real server
+Marker type ids are **open** — `region add capture-point-a`, `region add
+lasertag-base`, anything. `Regions.markersOf(store, instance, type)` /
+`markerAt(...)` are the query surface for plugin code. One reserved id
+exists: `spawn` markers are the kind the framework acts on itself (teleport
+targets when an instance starts).
+- Integration tests: 37 `@HytaleTest` methods run inside a real server
   via [hytest](https://github.com/ginco-org/hytest) (`./gradlew hytaleTest`);
   hytest loads the real plugin from the merged test jar (SubPlugins manifest),
   so nothing about the framework is stubbed or re-mounted in the harness.

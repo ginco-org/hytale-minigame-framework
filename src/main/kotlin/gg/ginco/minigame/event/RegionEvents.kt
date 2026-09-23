@@ -4,7 +4,6 @@ import com.hypixel.hytale.event.IEvent
 import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.server.core.universe.PlayerRef
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
-import gg.ginco.minigame.util.RegionKind
 
 /**
  * Fired when a player enters a region marker of their minigame instance.
@@ -21,20 +20,20 @@ import gg.ginco.minigame.util.RegionKind
  * @param player       the player that crossed the boundary
  * @param playerEntity the player's entity ref in the world store
  * @param instance     the minigame instance (controller entity) owning the region
- * @param marker       the marker entity crossed (carries its `Bounds` + kind component)
- * @param kind         the marker vocabulary — data, not behaviour: consumers
- *   decide what a goal/death/safe/capture crossing means
+ * @param marker       the marker entity crossed (carries its `Bounds` + type id)
+ * @param type         the marker's type id — arbitrary, plugin-chosen data;
+ *   consumers decide what a crossing of their own types means
  */
 class PlayerEnterRegionEvent(
     val player: PlayerRef,
     val playerEntity: Ref<EntityStore>,
     val instance: Ref<EntityStore>,
     val marker: Ref<EntityStore>,
-    val kind: RegionKind,
+    val type: String,
 ) : IEvent<Void> {
 
     override fun toString(): String =
-        "PlayerEnterRegionEvent(player=${player.username}, instance=$instance, marker=$marker, kind=${kind.kindName})"
+        "PlayerEnterRegionEvent(player=${player.username}, instance=$instance, marker=$marker, type='$type')"
 }
 
 /**
@@ -47,9 +46,9 @@ class PlayerExitRegionEvent(
     val playerEntity: Ref<EntityStore>,
     val instance: Ref<EntityStore>,
     val marker: Ref<EntityStore>,
-    val kind: RegionKind,
+    val type: String,
 ) : IEvent<Void> {
 
     override fun toString(): String =
-        "PlayerExitRegionEvent(player=${player.username}, instance=$instance, marker=$marker, kind=${kind.kindName})"
+        "PlayerExitRegionEvent(player=${player.username}, instance=$instance, marker=$marker, type='$type')"
 }

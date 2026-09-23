@@ -38,7 +38,7 @@ class MinigameSpawnTest {
     private fun spawnPointCount(t: HytaleTestHelper): Int =
         t.runOnWorldReturning {
             val store = MinigameTestHarness.storeOf(t.world)
-            MinigameTestHarness.controllers(store).sumOf { gg.ginco.minigame.util.Regions.markersOf(store, it, gg.ginco.minigame.util.RegionKind.SPAWN).size }
+            MinigameTestHarness.controllers(store).sumOf { gg.ginco.minigame.util.Regions.markersOf(store, it, gg.ginco.minigame.util.Regions.SPAWN_TYPE).size }
         }
 
     private fun near(actual: Vector3d, expected: Vector3d, tolerance: Double): Boolean {
@@ -52,12 +52,12 @@ class MinigameSpawnTest {
         val alice = player(t)
         val instanceId = createInstance(t, alice, "arena")
         alice.teleport(60.0, 64.0, 80.0).join()
-        alice.runCommand("minigame region spawn").join()
+        alice.runCommand("minigame region add spawn").join()
 
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(t.world)
             val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
-            val spawns = gg.ginco.minigame.util.Regions.markersOf(store, controller, gg.ginco.minigame.util.RegionKind.SPAWN)
+            val spawns = gg.ginco.minigame.util.Regions.markersOf(store, controller, gg.ginco.minigame.util.Regions.SPAWN_TYPE)
             t.assertEquals(1, spawns.size, "exactly one marker should exist")
             val center = spawns.single().bounds.center()
             t.assertTrue(near(center, Vector3d(60.0, 64.0, 80.0), 0.5),
@@ -77,9 +77,9 @@ class MinigameSpawnTest {
 
         // Two markers at distinct spots (marker order == creation order).
         alice.teleport(30.0, 64.0, 30.0).join()
-        alice.runCommand("minigame region spawn").join()
+        alice.runCommand("minigame region add spawn").join()
         alice.teleport(-30.0, 64.0, -30.0).join()
-        alice.runCommand("minigame region spawn").join()
+        alice.runCommand("minigame region add spawn").join()
 
         alice.runCommand("minigame join").join()
         bob.runCommand("minigame join").join()
@@ -134,9 +134,9 @@ class MinigameSpawnTest {
     fun regionClearRemovesSpawnPoints(t: HytaleTestHelper) {
         val alice = player(t)
         createInstance(t, alice, "arena")
-        alice.runCommand("minigame region spawn").join()
+        alice.runCommand("minigame region add spawn").join()
         alice.teleport(10.0, 64.0, 10.0).join()
-        alice.runCommand("minigame region spawn").join()
+        alice.runCommand("minigame region add spawn").join()
         t.assertEquals(2, spawnPointCount(t), "two markers should exist before clear")
 
         alice.runCommand("minigame region clear").join()
@@ -151,7 +151,7 @@ class MinigameSpawnTest {
     fun instanceCleanupRemovesMarkers(t: HytaleTestHelper) {
         val alice = player(t)
         createInstance(t, alice, "arena")
-        alice.runCommand("minigame region spawn").join()
+        alice.runCommand("minigame region add spawn").join()
         t.assertEquals(1, spawnPointCount(t), "marker should exist before stop")
 
         alice.runCommand("minigame stop").join()

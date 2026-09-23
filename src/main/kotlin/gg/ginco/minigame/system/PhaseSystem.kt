@@ -17,7 +17,6 @@ import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamRef
 import gg.ginco.minigame.util.PlayerSet
-import gg.ginco.minigame.util.RegionKind
 import gg.ginco.minigame.util.Regions
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import java.util.function.BiConsumer
@@ -125,7 +124,7 @@ class PhaseSystem : TickingSystem<EntityStore>() {
      * world thread, so direct [TransformComponent] mutation is legal.
      */
     private fun teleportPlayersToSpawnPoints(store: Store<EntityStore>, controllerRef: Ref<EntityStore>) {
-        val spawns = Regions.markersOf(store, controllerRef, RegionKind.SPAWN)
+        val spawns = Regions.markersOf(store, controllerRef, Regions.SPAWN_TYPE)
         if (spawns.isEmpty()) return
 
         val players = PlayerSet(store, controllerRef).all()

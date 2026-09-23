@@ -13,7 +13,6 @@ import gg.ginco.minigame.event.PlayerEnterRegionEvent
 import gg.ginco.minigame.event.PlayerExitRegionEvent
 import gg.ginco.minigame.hytaletest.MinigameTestHarness
 import gg.ginco.minigame.hytaletest.Players
-import gg.ginco.minigame.util.RegionKind
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -62,13 +61,13 @@ class MinigameRegionEventsTest {
 
         val instanceId = createInstance(t, alice, "arena")
         alice.teleport(40.0, 64.0, 40.0).join()
-        alice.runCommand("minigame region goal").join()
+        alice.runCommand("minigame region add goal").join()
 
         val world = t.world
         val ids = t.runOnWorldReturning {
             val store = MinigameTestHarness.storeOf(world)
             val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
-            val marker = gg.ginco.minigame.util.Regions.markersOf(store, controller, RegionKind.GOAL).single().ref
+            val marker = gg.ginco.minigame.util.Regions.markersOf(store, controller, "goal").single().ref
             Triple(instanceId, marker, MinigameTestHarness.refOf(alice.ref()))
         }
 
@@ -101,10 +100,10 @@ class MinigameRegionEventsTest {
             t.assertEquals("Alice", enter.player.username, "enter should carry the player")
             t.assertEquals(ids.third, enter.playerEntity, "enter should carry the player entity ref")
             t.assertEquals(ids.second, enter.marker, "enter should carry the marker ref")
-            t.assertEquals(RegionKind.GOAL, enter.kind, "enter should carry the marker kind")
+            t.assertEquals("goal", enter.type, "enter should carry the marker type")
             t.assertEquals(ids.first, MinigameTestHarness.instanceIdOf(store, enter.instance), "enter should carry the instance")
             val exit = exits.single()
-            t.assertEquals(RegionKind.GOAL, exit.kind, "exit should carry the marker kind")
+            t.assertEquals("goal", exit.type, "exit should carry the marker type")
             t.assertEquals(ids.second, exit.marker, "exit should carry the marker ref")
         }
         t.succeed()
@@ -119,7 +118,7 @@ class MinigameRegionEventsTest {
 
         createInstance(t, alice, "arena")
         alice.teleport(15.0, 64.0, 15.0).join()
-        alice.runCommand("minigame region death").join()
+        alice.runCommand("minigame region add death").join()
         alice.runCommand("minigame join").join()
 
         t.runOnWorld {
@@ -132,7 +131,7 @@ class MinigameRegionEventsTest {
         t.succeedWhen {
             t.assertTrue(enters.isNotEmpty(), "enter should fire even while Waiting")
         }
-        t.assertEquals(RegionKind.DEATH, enters.single().kind, "kind should be death")
+        t.assertEquals("death", enters.single().type, "type should be death")
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(t.world)
             val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
@@ -152,7 +151,7 @@ class MinigameRegionEventsTest {
         val world = t.world
 
         registrations.add(HytestPlugin.EVENTS!!.register(PlayerEnterRegionEvent::class.java) { e ->
-            if (e.kind != RegionKind.DEATH) return@register
+            if (e.type != "death") return@register
             // World thread (system tick) — direct store mutation is legal here.
             val store = world.entityStore.store
             if (store.getComponent(e.playerEntity, Role.componentType) != null) {
@@ -162,7 +161,7 @@ class MinigameRegionEventsTest {
 
         createInstance(t, alice, "arena")
         alice.teleport(-60.0, 64.0, -60.0).join()
-        alice.runCommand("minigame region death").join()
+        alice.runCommand("minigame region add death").join()
         alice.runCommand("minigame join").join()
         alice.runCommand("minigame start --seconds=1").join()
         t.succeedWhen {
@@ -195,7 +194,7 @@ class MinigameRegionEventsTest {
         val world = t.world
 
         registrations.add(HytestPlugin.EVENTS!!.register(PlayerEnterRegionEvent::class.java) { e ->
-            if (e.kind != RegionKind.GOAL) return@register
+            if (e.type != "goal") return@register
             val store = world.entityStore.store
             val phase = store.getComponent(e.instance, Phase.componentType) ?: return@register
             // Play-only gating is the consumer's job (events fire in all phases).
@@ -205,7 +204,7 @@ class MinigameRegionEventsTest {
 
         createInstance(t, alice, "arena")
         alice.teleport(70.0, 64.0, 20.0).join()
-        alice.runCommand("minigame region goal").join()
+        alice.runCommand("minigame region add goal").join()
         alice.runCommand("minigame join").join()
         alice.runCommand("minigame start --seconds=1").join()
 
@@ -224,16 +223,46 @@ class MinigameRegionEventsTest {
         t.succeed()
     }
 
+    /** Type ids are open: a plugin can invent its own ("laser-base") and listen for exactly that. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun customTypeIdsWorkEndToEnd(t: HytaleTestHelper) {
+        val alice = player(t)
+        val enters = CopyOnWriteArrayList<PlayerEnterRegionEvent>()
+        trackEnter(t, enters)
+
+        createInstance(t, alice, "arena")
+        alice.teleport(5.0, 64.0, 5.0).join()
+        alice.runCommand("minigame region add laser-base").join()
+        alice.runCommand("minigame join").join()
+
+        alice.teleport(5.0, 64.0, 5.0).join() // into the custom marker
+        // succeedWhen polls asynchronously — assert the payload INSIDE it.
+        t.succeedWhen {
+            t.assertTrue(enters.isNotEmpty(), "enter should fire for a custom type id")
+            t.assertEquals("laser-base", enters.single().type, "the event should carry the plugin's own type id")
+        }
+
+        // Untyped list/clear treat custom ids like any other.
+        alice.drainReceivedMessages()
+        alice.runCommand("minigame region list").join()
+        t.assertTrue(alice.sawMessage("laser-base at (5.0, 64.0, 5.0)"),
+            "list should show the custom marker, got: ${alice.receivedMessages()}")
+        alice.runCommand("minigame region clear --type=laser-base").join()
+        t.assertTrue(alice.sawMessage("Removed 1 laser-base marker(s)"),
+            "typed clear should work for custom ids, got: ${alice.receivedMessages()}")
+        t.succeed()
+    }
+
     /** `region list` groups markers by kind; `clear --type=<kind>` removes just that kind. */
     @HytaleTest(timeoutSeconds = 60)
     fun regionListAndTypedClear(t: HytaleTestHelper) {
         val alice = player(t)
         val instanceId = createInstance(t, alice, "arena")
-        alice.runCommand("minigame region spawn").join()
+        alice.runCommand("minigame region add spawn").join()
         alice.teleport(30.0, 64.0, 30.0).join()
-        alice.runCommand("minigame region goal").join()
+        alice.runCommand("minigame region add goal").join()
         alice.teleport(-30.0, 64.0, -30.0).join()
-        alice.runCommand("minigame region death").join()
+        alice.runCommand("minigame region add death").join()
         alice.drainReceivedMessages()
 
         alice.runCommand("minigame region list").join()

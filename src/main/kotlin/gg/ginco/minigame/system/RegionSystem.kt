@@ -14,7 +14,6 @@ import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.event.PlayerEnterRegionEvent
 import gg.ginco.minigame.event.PlayerExitRegionEvent
-import gg.ginco.minigame.util.RegionKind
 import gg.ginco.minigame.util.MarkerSnapshot
 import gg.ginco.minigame.util.Regions
 import org.joml.Vector3d
@@ -34,7 +33,8 @@ import java.util.function.BiConsumer
  * the scan, since the store must not be written while its processing lock is
  * held — fire the events and update the presence component.
  *
- * Spawn points do not emit events: they are teleport targets, not regions.
+ * `spawn`-type markers do not emit events: they are teleport targets, not
+ * gameplay regions.
  *
  * Listeners run synchronously on the world thread during this tick: mutating
  * store/entity state is allowed, blocking is not.
@@ -74,7 +74,7 @@ class RegionSystem : TickingSystem<EntityStore>() {
 
         for (player in players) {
             val zones = zonesByController.getOrPut(player.controller) {
-                Regions.markersOf(store, player.controller).filter { it.kind != RegionKind.SPAWN }
+                Regions.markersOf(store, player.controller).filter { it.type != Regions.SPAWN_TYPE }
             }
             val current = zones.filter { it.contains(player.position) }
 
@@ -82,13 +82,13 @@ class RegionSystem : TickingSystem<EntityStore>() {
             val exited = player.inside.filter { inside -> current.none { it.ref == inside } }
 
             for (marker in entered) {
-                dispatch(PlayerEnterRegionEvent(player.player, player.entity, player.controller, marker.ref, marker.kind))
+                dispatch(PlayerEnterRegionEvent(player.player, player.entity, player.controller, marker.ref, marker.type))
             }
             for (markerRef in exited) {
                 // Exits fire while the marker still exists; markers removed
                 // while occupied silently drop out of the tracked presence.
-                val kind = RegionKind.ofComponent(store, markerRef) ?: continue
-                dispatch(PlayerExitRegionEvent(player.player, player.entity, player.controller, markerRef, kind))
+                val type = Regions.typeOf(store, markerRef) ?: continue
+                dispatch(PlayerExitRegionEvent(player.player, player.entity, player.controller, markerRef, type))
             }
 
             if (entered.isNotEmpty() || exited.isNotEmpty()) {

@@ -108,3 +108,6 @@ Branch: `bb/wire-hytest-into-the-minigame-framework-and-writ-thr_vvvkaqc6ne` (wo
 `Phase` and `Role` were **sealed interfaces**; the server ECS validates every
 stored component instance by exact class equality, so no subtype instance could
 ever be stored. Redesigned as single concrete classes.
+9. Marker types are open string ids (`RegionMarker.type`), NOT a fixed
+   vocabulary — `/minigame region add <any-id>`; events carry `type: String`.
+   Only `spawn` is reserved (framework start-of-game teleports).
