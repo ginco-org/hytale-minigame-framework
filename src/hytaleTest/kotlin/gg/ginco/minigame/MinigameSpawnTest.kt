@@ -38,7 +38,7 @@ class MinigameSpawnTest {
     private fun spawnPointCount(t: HytaleTestHelper): Int =
         t.runOnWorldReturning {
             val store = MinigameTestHarness.storeOf(t.world)
-            MinigameTestHarness.controllers(store).sumOf { gg.ginco.minigame.util.SpawnPoints.of(store, it).size }
+            MinigameTestHarness.controllers(store).sumOf { gg.ginco.minigame.util.Regions.markersOf(store, it, gg.ginco.minigame.util.RegionKind.SPAWN).size }
         }
 
     private fun near(actual: Vector3d, expected: Vector3d, tolerance: Double): Boolean {
@@ -57,13 +57,13 @@ class MinigameSpawnTest {
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(t.world)
             val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
-            val spawns = gg.ginco.minigame.util.SpawnPoints.of(store, controller)
+            val spawns = gg.ginco.minigame.util.Regions.markersOf(store, controller, gg.ginco.minigame.util.RegionKind.SPAWN)
             t.assertEquals(1, spawns.size, "exactly one marker should exist")
             val center = spawns.single().bounds.center()
             t.assertTrue(near(center, Vector3d(60.0, 64.0, 80.0), 0.5),
                 "marker centre should be the admin position, got $center")
         }
-        t.assertTrue(alice.sawMessage("Spawn point #1 for instance #$instanceId at (60.0, 64.0, 80.0)."),
+        t.assertTrue(alice.sawMessage("Created spawn marker #1 for instance #$instanceId at (60.0, 64.0, 80.0)."),
             "create should confirm position, got: ${alice.receivedMessages()}")
         t.succeed()
     }
@@ -141,7 +141,7 @@ class MinigameSpawnTest {
 
         alice.runCommand("minigame region clear").join()
         t.assertEquals(0, spawnPointCount(t), "clear should remove all markers")
-        t.assertTrue(alice.sawMessage("Removed 2 spawn point(s)"),
+        t.assertTrue(alice.sawMessage("Removed 2 marker(s) from instance"),
             "clear should report the count, got: ${alice.receivedMessages()}")
         t.succeed()
     }

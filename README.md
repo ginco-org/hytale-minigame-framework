@@ -40,6 +40,31 @@ Second vertical slice implemented:
     `TeamMembers` + `InMinigame` -> instance); players carry `TeamRef` -> team;
     names are unique per instance, not globally; instance cleanup releases
     teams and memberships
+  - `region spawn|goal|death|safe|capture [--game=<id>]`,
+    `region list [--game=<id>]`, `region clear [--type=<kind>]` — in-game
+    marker creation at your position
+
+## Regions are data, not behaviour
+
+The framework DETECTS region boundary crossings and fires
+`PlayerEnterRegionEvent` / `PlayerExitRegionEvent` (every instance phase;
+listeners run on the world thread). It deliberately attaches no meaning to
+them — killing players in death zones, scoring goals, capture progress are
+**consuming-plugin logic** written as event listeners:
+
+```kotlin
+eventRegistry.register(PlayerEnterRegionEvent::class.java) { e ->
+    if (e.kind != RegionKind.DEATH) return@register
+    val phase = entityStore.store.getComponent(e.instance, Phase.componentType)
+    if (phase?.kind != Phase.Kind.PLAYING) return@register   // play-only rule
+    entityStore.store.replaceComponent(
+        e.playerEntity, Role.componentType, Role.disqualified("died in a death zone"))
+}
+```
+
+`Regions.markersOf(store, instance, kind)` / `markerAt(...)` are the query
+surface for plugin code. `spawn` markers are the one kind the framework acts
+on itself: they are the teleport targets when an instance starts.
 - Integration tests: 26 `@HytaleTest` methods run inside a real server
   via [hytest](https://github.com/ginco-org/hytest) (`./gradlew hytaleTest`);
   hytest loads the real plugin from the merged test jar (SubPlugins manifest),

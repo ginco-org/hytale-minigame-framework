@@ -23,6 +23,7 @@ import gg.ginco.minigame.component.EndReason
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.Phase
+import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.component.TeamMembers
@@ -71,6 +72,18 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
         addSubCommand(RegionCommand())
     }
 
+        /** Immutable snapshot of one instance's state (safe to keep after a scan). */
+        data class InstanceSnapshot(
+            val ref: Ref<EntityStore>,
+            val id: Int,
+            val phase: Phase,
+        ) {
+            val isJoinable: Boolean get() = phase.kind == Phase.Kind.WAITING || phase.kind == Phase.Kind.COUNTDOWN
+            val isLive: Boolean
+                get() = phase.kind == Phase.Kind.WAITING || phase.kind == Phase.Kind.COUNTDOWN ||
+                    phase.kind == Phase.Kind.PLAYING
+        }
+
     companion object {
         /**
          * Lazily built: [Archetype.of] captures the ComponentType objects at
@@ -93,18 +106,6 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
         fun controllerScanner(body: (ArchetypeChunk<EntityStore>, Int) -> Unit):
                 BiConsumer<ArchetypeChunk<EntityStore>, CommandBuffer<EntityStore>> =
             BiConsumer { chunk, _ -> for (i in 0 until chunk.size()) body(chunk, i) }
-
-        /** Immutable snapshot of one instance's state (safe to keep after a scan). */
-        data class InstanceSnapshot(
-            val ref: Ref<EntityStore>,
-            val id: Int,
-            val phase: Phase,
-        ) {
-            val isJoinable: Boolean get() = phase.kind == Phase.Kind.WAITING || phase.kind == Phase.Kind.COUNTDOWN
-            val isLive: Boolean
-                get() = phase.kind == Phase.Kind.WAITING || phase.kind == Phase.Kind.COUNTDOWN ||
-                    phase.kind == Phase.Kind.PLAYING
-        }
 
         /**
          * Every instance, ordered by id. Scan only — the store must not be
@@ -335,6 +336,7 @@ class LeaveCommand : AbstractPlayerCommand("leave", "minigame.commands.leave.des
         store.removeComponentIfExists(ref, InMinigame.componentType)
         store.removeComponentIfExists(ref, Role.componentType)
         store.removeComponentIfExists(ref, TeamRef.componentType)
+        store.removeComponentIfExists(ref, RegionPresence.componentType)
 
         if (controllerRef != null && controllerRef.isValid()) {
             PlayerSet(store, controllerRef).sendMessage(Message.raw("${playerRef.username} left the minigame."))

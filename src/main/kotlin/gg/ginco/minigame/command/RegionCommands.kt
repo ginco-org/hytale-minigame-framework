@@ -2,8 +2,12 @@ package gg.ginco.minigame.command
 
 import com.hypixel.hytale.component.AddReason
 import com.hypixel.hytale.component.Archetype
+import com.hypixel.hytale.component.ArchetypeChunk
+import com.hypixel.hytale.component.CommandBuffer
 import com.hypixel.hytale.component.Component
+import com.hypixel.hytale.component.ComponentType
 import com.hypixel.hytale.component.Ref
+import com.hypixel.hytale.component.RemoveReason
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.server.core.Message
 import com.hypixel.hytale.server.core.command.system.CommandContext
@@ -19,44 +23,106 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.Bounds
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.SpawnPoint
-import gg.ginco.minigame.util.SpawnPoints
+import gg.ginco.minigame.util.RegionKind
+import gg.ginco.minigame.util.Regions
 import org.joml.Vector3d
+import java.util.function.BiConsumer
 
 /**
  * `/minigame region` — in-game region and marker management.
  *
- * v1 covers spawn-point markers only: an admin stands where players should
- * appear and runs `/minigame region spawn`. The marker stores a small
- * [Bounds] box around that position; when an instance transitions Countdown
- * -> Playing, [gg.ginco.minigame.system.PhaseSystem] teleports its players
- * to the markers (round-robin, creation order). Instances without markers
- * don't move their players.
+ * Markers are DATA: `<kind>` markers record where something is; the framework
+ * reports boundary crossings as events
+ * (`PlayerEnterRegionEvent` / `PlayerExitRegionEvent`) and leaves every
+ * decision about what that means to consuming plugins. `spawn` markers are
+ * the one exception wired into the framework itself: they are the teleport
+ * targets used when an instance starts.
  *
- * Markers belong to one instance (via `InMinigame` -> controller) and are
- * removed with it.
+ * All marker entities carry `Bounds` + `InMinigame` -> their instance (and
+ * are removed with it) plus their kind component.
  */
 class RegionCommand : AbstractCommandCollection("region", "minigame.commands.region.desc") {
     init {
         addSubCommand(RegionSpawnCommand())
+        addSubCommand(RegionGoalCommand())
+        addSubCommand(RegionDeathCommand())
+        addSubCommand(RegionSafeCommand())
+        addSubCommand(RegionCaptureCommand())
         addSubCommand(RegionListCommand())
         addSubCommand(RegionClearCommand())
     }
 
     companion object {
-        /** Created via newHolder with exactly these components; see CreateCommand for slot rules. */
-        val SPAWN_ARCHETYPE: Archetype<EntityStore> by lazy {
-            Archetype.of(SpawnPoint.componentType, Bounds.componentType, InMinigame.componentType)
-        }
-
         /** Half-extent of the box stored around the chosen position. */
         const val MARKER_HALF_EXTENT = 2.0
+
+        /**
+         * Creates a marker entity of [kind] centred on [position], linked to
+         * [instanceRef]. Returns the marker ref, or null when the store
+         * rejected the entity.
+         */
+        fun createMarker(
+            store: Store<EntityStore>,
+            instanceRef: Ref<EntityStore>,
+            kind: RegionKind,
+            position: Vector3d,
+        ): Ref<EntityStore>? {
+            val extent = MARKER_HALF_EXTENT
+            val markerType = kind.componentType()
+            val archetype = Archetype.of(Bounds.componentType, InMinigame.componentType, markerType)
+            @Suppress("UNCHECKED_CAST")
+            val components = arrayOfNulls<Component<EntityStore>>(archetype.length())
+            components[Bounds.componentType.index] = Bounds(
+                Vector3d(position.x - extent, position.y - extent, position.z - extent),
+                Vector3d(position.x + extent, position.y + extent, position.z + extent),
+            )
+            components[InMinigame.componentType.index] = InMinigame(instanceRef)
+            components[markerType.index] = newMarkerComponent(kind)
+            val holder = store.registry.newHolder(archetype, components as Array<Component<EntityStore>>)
+            return store.addEntity(holder, AddReason.SPAWN)
+        }
+
+        private fun newMarkerComponent(kind: RegionKind): Component<EntityStore> = when (kind) {
+            RegionKind.SPAWN -> SpawnPoint()
+            RegionKind.GOAL -> gg.ginco.minigame.component.Goal()
+            RegionKind.DEATH -> gg.ginco.minigame.component.DeathZone()
+            RegionKind.SAFE -> gg.ginco.minigame.component.SafeZone()
+            RegionKind.CAPTURE -> gg.ginco.minigame.component.CaptureZone()
+        }
+
+        /**
+         * The live instance an untargeted marker command applies to: the
+         * lowest-id live instance, or the one named by `--game=<id>`. Sends
+         * the rejection message itself when no target exists.
+         */
+        fun resolveTarget(context: CommandContext, store: Store<EntityStore>, gameArg: com.hypixel.hytale.server.core.command.system.arguments.system.Argument<*, Int>): MinigameCommand.InstanceSnapshot? {
+            val targetId = if (context.provided(gameArg)) context.get(gameArg) else null
+            val target = MinigameCommand.snapshot(store)
+                .filter { it.isLive && (targetId == null || it.id == targetId) }
+                .firstOrNull()
+            if (target == null) {
+                context.sendMessage(
+                    if (targetId != null) Message.raw("Instance #$targetId does not exist or is not running.")
+                    else Message.raw("No running instances. Create one with /minigame create first.")
+                )
+            }
+            return target
+        }
+
+        fun format(position: Vector3d): String = "(%.1f, %.1f, %.1f)".format(position.x, position.y, position.z)
     }
 }
 
-/** Creates a spawn-point marker at the sender's position: `/minigame region spawn [--game=<id>]`. */
-class RegionSpawnCommand : AbstractPlayerCommand("spawn", "minigame.commands.region.spawn.desc") {
+/**
+ * Creates a marker of the command's kind at the sender's position:
+ * `/minigame region <kind> [--game=<id>]`.
+ */
+abstract class RegionMarkerCreateCommand(name: String, description: String) :
+    AbstractPlayerCommand(name, description) {
 
     private val gameArg = withOptionalArg("game", "minigame.commands.game.desc", ArgTypes.INTEGER)
+
+    protected abstract fun kind(): RegionKind
 
     override fun execute(
         context: CommandContext,
@@ -65,87 +131,71 @@ class RegionSpawnCommand : AbstractPlayerCommand("spawn", "minigame.commands.reg
         playerRef: PlayerRef,
         world: World
     ) {
-        val targetId = MinigameCommand.targetInstance(context, gameArg)
-        val target = MinigameCommand.snapshot(store)
-            .filter { it.isLive && (targetId == null || it.id == targetId) }
-            .firstOrNull()
-        if (target == null) {
-            context.sendMessage(
-                if (targetId != null) Message.raw("Instance #$targetId does not exist or is not running.")
-                else Message.raw("No running instances. Create one with /minigame create first.")
-            )
-            return
-        }
+        val kind = kind()
+        val target = RegionCommand.resolveTarget(context, store, gameArg) ?: return
 
         // Authoritative position: the sender's TransformComponent in this
-        // store. (playerRef.transform lags component teleports — markers were
-        // created at the join point instead of the teleported spot.)
+        // store. (playerRef.transform lags component teleports.)
         val position = Vector3d(store.getComponent(ref, TransformComponent.getComponentType())!!.position)
-        val extent = RegionCommand.MARKER_HALF_EXTENT
-        val archetype = RegionCommand.SPAWN_ARCHETYPE
-        @Suppress("UNCHECKED_CAST")
-        val components = arrayOfNulls<Component<EntityStore>>(archetype.length())
-        components[SpawnPoint.componentType.index] = SpawnPoint()
-        components[Bounds.componentType.index] = Bounds(
-            Vector3d(position.x - extent, position.y - extent, position.z - extent),
-            Vector3d(position.x + extent, position.y + extent, position.z + extent),
-        )
-        components[InMinigame.componentType.index] = InMinigame(target.ref)
-        val holder = store.registry.newHolder(archetype, components as Array<Component<EntityStore>>)
-        val markerRef = store.addEntity(holder, AddReason.SPAWN)
+        val markerRef = RegionCommand.createMarker(store, target.ref, kind, position)
         if (markerRef == null) {
-            context.sendMessage(Message.raw("Failed to create spawn point."))
+            context.sendMessage(Message.raw("Failed to create ${kind.kindName} marker."))
             return
         }
 
-        val index = SpawnPoints.of(store, target.ref).size
+        val count = Regions.markersOf(store, target.ref, kind).size
         context.sendMessage(
-            Message.raw(
-                "Spawn point #%d for instance #%d at (%.1f, %.1f, %.1f)."
-                    .format(index, target.id, position.x, position.y, position.z)
-            )
+            Message.raw("Created ${kind.kindName} marker #$count for instance #${target.id} at ${RegionCommand.format(position)}.")
         )
     }
 }
 
-/** Lists an instance's spawn-point markers: `/minigame region list [--game=<id>]`. */
+class RegionSpawnCommand : RegionMarkerCreateCommand("spawn", "minigame.commands.region.spawn.desc") {
+    override fun kind() = RegionKind.SPAWN
+}
+
+class RegionGoalCommand : RegionMarkerCreateCommand("goal", "minigame.commands.region.goal.desc") {
+    override fun kind() = RegionKind.GOAL
+}
+
+class RegionDeathCommand : RegionMarkerCreateCommand("death", "minigame.commands.region.death.desc") {
+    override fun kind() = RegionKind.DEATH
+}
+
+class RegionSafeCommand : RegionMarkerCreateCommand("safe", "minigame.commands.region.safe.desc") {
+    override fun kind() = RegionKind.SAFE
+}
+
+class RegionCaptureCommand : RegionMarkerCreateCommand("capture", "minigame.commands.region.capture.desc") {
+    override fun kind() = RegionKind.CAPTURE
+}
+
+/** Lists an instance's markers grouped by kind: `/minigame region list [--game=<id>]`. */
 class RegionListCommand : AbstractWorldCommand("list", "minigame.commands.region.list.desc") {
 
     private val gameArg = withOptionalArg("game", "minigame.commands.game.desc", ArgTypes.INTEGER)
 
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
-        val targetId = if (context.provided(gameArg)) context.get(gameArg) else null
-        val target = MinigameCommand.snapshot(store)
-            .filter { it.isLive && (targetId == null || it.id == targetId) }
-            .firstOrNull()
-        if (target == null) {
-            context.sendMessage(
-                if (targetId != null) Message.raw("Instance #$targetId does not exist or is not running.")
-                else Message.raw("No running instances.")
-            )
-            return
-        }
+        val target = RegionCommand.resolveTarget(context, store, gameArg) ?: return
 
-        val spawns = SpawnPoints.of(store, target.ref)
+        val markers = Regions.markersOf(store, target.ref)
         context.sendMessage(
-            if (spawns.isEmpty()) Message.raw("Instance #${target.id} has no spawn points.")
+            if (markers.isEmpty()) Message.raw("Instance #${target.id} has no markers.")
             else Message.raw(
-                spawns.joinToString(
-                    prefix = "Instance #${target.id} spawn points: ",
-                    transform = {
-                        val c = it.bounds.center()
-                        "(%.1f, %.1f, %.1f)".format(c.x, c.y, c.z)
-                    }
+                markers.joinToString(
+                    prefix = "Instance #${target.id} markers: ",
+                    transform = { "${it.kind.kindName} at ${RegionCommand.format(it.bounds.center())}" }
                 )
             )
         )
     }
 }
 
-/** Removes all spawn-point markers of an instance: `/minigame region clear [--game=<id>]`. */
+/** Removes markers of an instance: `/minigame region clear [--game=<id>] [--type=<kind>]`. */
 class RegionClearCommand : AbstractWorldCommand("clear", "minigame.commands.region.clear.desc") {
 
     private val gameArg = withOptionalArg("game", "minigame.commands.game.desc", ArgTypes.INTEGER)
+    private val typeArg = withOptionalArg("type", "minigame.commands.region.clear.type.desc", ArgTypes.STRING)
 
     init {
         setPermissionGroups(HytalePermissionsProvider.GROUP_ADMIN)
@@ -153,6 +203,17 @@ class RegionClearCommand : AbstractWorldCommand("clear", "minigame.commands.regi
 
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
         val targetId = if (context.provided(gameArg)) context.get(gameArg) else null
+        val typeName = if (context.provided(typeArg)) context.get(typeArg) else null
+
+        val kind = typeName?.let { parsed ->
+            RegionKind.fromName(parsed).also {
+                if (it == null) context.sendMessage(
+                    Message.raw("Unknown marker type '$parsed'. Types: ${RegionKind.entries.joinToString { k -> k.kindName }}.")
+                )
+            }
+        }
+        if (typeName != null && kind == null) return
+
         val target = MinigameCommand.snapshot(store)
             .filter { it.isLive && (targetId == null || it.id == targetId) }
             .firstOrNull()
@@ -165,10 +226,11 @@ class RegionClearCommand : AbstractWorldCommand("clear", "minigame.commands.regi
         }
 
         // Scan first, mutate after (store writes are illegal inside the scan).
-        val spawns = SpawnPoints.of(store, target.ref)
-        for (spawn in spawns) {
-            store.removeEntity(spawn.ref, com.hypixel.hytale.component.RemoveReason.REMOVE)
+        val markers = Regions.markersOf(store, target.ref).filter { kind == null || it.kind == kind }
+        for (marker in markers) {
+            store.removeEntity(marker.ref, RemoveReason.REMOVE)
         }
-        context.sendMessage(Message.raw("Removed ${spawns.size} spawn point(s) from instance #${target.id}."))
+        val scope = if (kind != null) " ${kind.kindName}" else ""
+        context.sendMessage(Message.raw("Removed ${markers.size}$scope marker(s) from instance #${target.id}."))
     }
 }

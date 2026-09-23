@@ -13,10 +13,12 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.Phase
+import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamRef
 import gg.ginco.minigame.util.PlayerSet
-import gg.ginco.minigame.util.SpawnPoints
+import gg.ginco.minigame.util.RegionKind
+import gg.ginco.minigame.util.Regions
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import java.util.function.BiConsumer
 
@@ -94,6 +96,7 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                 store.removeComponentIfExists(player, InMinigame.componentType)
                 store.removeComponentIfExists(player, Role.componentType)
                 store.removeComponentIfExists(player, TeamRef.componentType)
+                store.removeComponentIfExists(player, RegionPresence.componentType)
             }
             // Remove every non-player child entity linked to this instance
             // (teams, spawn-point markers, future marker types) — they must
@@ -122,12 +125,12 @@ class PhaseSystem : TickingSystem<EntityStore>() {
      * world thread, so direct [TransformComponent] mutation is legal.
      */
     private fun teleportPlayersToSpawnPoints(store: Store<EntityStore>, controllerRef: Ref<EntityStore>) {
-        val spawns = SpawnPoints.of(store, controllerRef)
+        val spawns = Regions.markersOf(store, controllerRef, RegionKind.SPAWN)
         if (spawns.isEmpty()) return
 
         val players = PlayerSet(store, controllerRef).all()
         for ((index, player) in players.withIndex()) {
-            val target = spawns[index % spawns.size].bounds.center()
+            val target = spawns[index % spawns.size].center()
             val transform = store.getComponent(player, TransformComponent.getComponentType()) ?: continue
             transform.teleportPosition(target)
         }
