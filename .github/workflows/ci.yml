@@ -87,12 +87,17 @@ jobs:
           HYTALE_TOKEN_JSON: ${{ secrets.HYTALE_TOKEN_JSON }}
         run: |
           mkdir -p ~/.local/share/hygradle
-          # The DOWNLOADER token (token.json) is what CI actually needs:
-          # provisionServer downloads the server + Assets through it and
-          # auto-refreshes expired access tokens (HytaleAuth.getAccessToken).
-          # Session tokens (token-server.json) are optional — the server runs
-          # and the suite passes without them.
-          printf '%s' "$HYTALE_TOKEN_JSON" > ~/.local/share/hygradle/token.json
+          # Seed ONLY when the rotation chain had no cached token (first run,
+          # cache eviction) — overwriting a restored token would clobber the
+          # newest rotated refresh token and break the chain. The DOWNLOADER
+          # token is what provisionServer authenticates with; access tokens
+          # auto-refresh and session tokens are optional for this suite.
+          if [ ! -s ~/.local/share/hygradle/token.json ]; then
+            printf '%s' "$HYTALE_TOKEN_JSON" > ~/.local/share/hygradle/token.json
+            echo "seeded token.json from HYTALE_TOKEN_JSON"
+          else
+            echo "token.json restored from cache — keeping the latest rotated token"
+          fi
       - name: Run integration suite
         if: steps.token.outputs.available == 'true'
         run: ./gradlew hytaleTest
