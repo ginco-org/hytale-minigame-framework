@@ -31,10 +31,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # hytest is private: the default GITHUB_TOKEN is scoped to THIS repo, so
+      # the sibling checkout needs a PAT (GH_CHECKOUT_TOKEN). Alternative once
+      # someone holds admin:org: flip the org workflow-token default to read
+      # and drop this secret again.
       - uses: actions/checkout@v4
         with:
           repository: ginco-org/hytest
           path: hytest
+          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -52,10 +57,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # hytest is private: the default GITHUB_TOKEN is scoped to THIS repo, so
+      # the sibling checkout needs a PAT (GH_CHECKOUT_TOKEN). Alternative once
+      # someone holds admin:org: flip the org workflow-token default to read
+      # and drop this secret again.
       - uses: actions/checkout@v4
         with:
           repository: ginco-org/hytest
           path: hytest
+          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
