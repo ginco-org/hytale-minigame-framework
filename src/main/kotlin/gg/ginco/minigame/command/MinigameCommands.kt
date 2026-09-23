@@ -24,7 +24,11 @@ import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.Role
+import gg.ginco.minigame.component.TeamData
+import gg.ginco.minigame.component.TeamMembers
+import gg.ginco.minigame.component.TeamRef
 import gg.ginco.minigame.util.PlayerSet
+import gg.ginco.minigame.util.Teams
 import java.util.function.BiConsumer
 
 /**
@@ -63,6 +67,7 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
         addSubCommand(StatusCommand())
         addSubCommand(JoinCommand())
         addSubCommand(LeaveCommand())
+        addSubCommand(TeamCommand())
     }
 
     companion object {
@@ -320,11 +325,206 @@ class LeaveCommand : AbstractPlayerCommand("leave", "minigame.commands.leave.des
         }
 
         val controllerRef = inMinigame.controllerRef
+        // Leaving the minigame also leaves the team (roster must not keep a
+        // player who is no longer in the instance).
+        val teamRef = store.getComponent(ref, TeamRef.componentType)?.teamRef
+        if (teamRef != null && teamRef.isValid()) {
+            store.getComponent(teamRef, TeamMembers.componentType)?.members?.remove(ref)
+        }
         store.removeComponentIfExists(ref, InMinigame.componentType)
         store.removeComponentIfExists(ref, Role.componentType)
+        store.removeComponentIfExists(ref, TeamRef.componentType)
 
         if (controllerRef != null && controllerRef.isValid()) {
             PlayerSet(store, controllerRef).sendMessage(Message.raw("${playerRef.username} left the minigame."))
         }
     }
+}
+
+/**
+ * `/minigame team` — team management within one minigame instance.
+ *
+ * A team is an entity with [TeamData] + [TeamMembers] + `InMinigame` (linking
+ * it to its instance). Players carry `TeamRef` -> team; membership is two-way
+ * (the team's [TeamMembers] lists the player too), so game systems can walk
+ * either direction and cleanup can drop everything when the instance ends.
+ *
+ * Team names are unique per instance (not globally): two instances may each
+ * have a team named `red`.
+ */
+class TeamCommand : AbstractCommandCollection("team", "minigame.commands.team.desc") {
+    init {
+        addSubCommand(TeamCreateCommand())
+        addSubCommand(TeamJoinCommand())
+        addSubCommand(TeamLeaveCommand())
+        addSubCommand(TeamListCommand())
+    }
+}
+
+/** Creates a team for an instance: `/minigame team create <name> [--game=<id>]`. */
+class TeamCreateCommand : AbstractWorldCommand("create", "minigame.commands.team.create.desc") {
+
+    private val nameArg = withRequiredArg("name", "minigame.commands.team.create.name.desc", ArgTypes.STRING)
+    private val gameArg = withOptionalArg("game", "minigame.commands.game.desc", ArgTypes.INTEGER)
+
+    init {
+        setPermissionGroups(HytalePermissionsProvider.GROUP_ADMIN)
+    }
+
+    override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
+        val name = nameArg.get(context)
+        val targetId = MinigameCommand.targetInstance(context, gameArg)
+
+        val target = MinigameCommand.snapshot(store)
+            .filter { it.isLive && (targetId == null || it.id == targetId) }
+            .firstOrNull()
+        if (target == null) {
+            context.sendMessage(
+                if (targetId != null) Message.raw("Instance #$targetId does not exist or is not running.")
+                else Message.raw("No running instances. Create one with /minigame create first.")
+            )
+            return
+        }
+        if (Teams.findByName(store, target.ref, name) != null) {
+            context.sendMessage(Message.raw("Instance #${target.id} already has a team named '$name'."))
+            return
+        }
+
+        val archetype = TEAM_ARCHETYPE
+        @Suppress("UNCHECKED_CAST")
+        val components = arrayOfNulls<Component<EntityStore>>(archetype.length())
+        components[TeamData.componentType.index] = TeamData(name = name)
+        components[TeamMembers.componentType.index] = TeamMembers()
+        components[InMinigame.componentType.index] = InMinigame(target.ref)
+        val holder = store.registry.newHolder(archetype, components as Array<Component<EntityStore>>)
+        val ref = store.addEntity(holder, AddReason.SPAWN)
+        if (ref == null) {
+            context.sendMessage(Message.raw("Failed to create team."))
+            return
+        }
+
+        context.sendMessage(Message.raw("Created team '$name' for instance #${target.id}."))
+    }
+
+    private companion object {
+        /** Created via newHolder with exactly these components; see CreateCommand for slot rules. */
+        val TEAM_ARCHETYPE: Archetype<EntityStore> by lazy {
+            Archetype.of(TeamData.componentType, TeamMembers.componentType, InMinigame.componentType)
+        }
+    }
+}
+
+/** Joins the sender to a team of their own instance: `/minigame team join <name>`. */
+class TeamJoinCommand : AbstractPlayerCommand("join", "minigame.commands.team.join.desc") {
+
+    private val nameArg = withRequiredArg("name", "minigame.commands.team.join.name.desc", ArgTypes.STRING)
+
+    override fun execute(
+        context: CommandContext,
+        store: Store<EntityStore>,
+        ref: Ref<EntityStore>,
+        playerRef: PlayerRef,
+        world: World
+    ) {
+        val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
+        if (controllerRef == null) {
+            context.sendMessage(Message.raw("You are not in a minigame."))
+            return
+        }
+
+        val existingTeam = store.getComponent(ref, TeamRef.componentType)?.teamRef
+        if (existingTeam != null && existingTeam.isValid()) {
+            val name = store.getComponent(existingTeam, TeamData.componentType)?.name ?: "?"
+            context.sendMessage(Message.raw("You are already on team '$name'. Use /minigame team leave first."))
+            return
+        }
+
+        val name = nameArg.get(context)
+        val team = Teams.findByName(store, controllerRef, name)
+        if (team == null) {
+            context.sendMessage(Message.raw("No team named '$name' in your minigame."))
+            return
+        }
+        val maxPlayers = team.data.maxPlayers
+        val roster = store.getComponent(team.ref, TeamMembers.componentType)?.members ?: mutableListOf()
+        if (maxPlayers in 1..roster.size) {
+            context.sendMessage(Message.raw("Team '$name' is full ($maxPlayers player(s))."))
+            return
+        }
+
+        store.addComponent(ref, TeamRef.componentType, TeamRef(team.ref))
+        roster.add(ref)
+
+        // Announce to the team including the joiner (already in the roster).
+        for (member in roster) {
+            val memberPlayer = store.getComponent(member, PlayerRef.getComponentType()) ?: continue
+            memberPlayer.sendMessage(Message.raw("${playerRef.username} joined team '$name'."))
+        }
+    }
+}
+
+/** Removes the sender from their team: `/minigame team leave`. */
+class TeamLeaveCommand : AbstractPlayerCommand("leave", "minigame.commands.team.leave.desc") {
+
+    override fun execute(
+        context: CommandContext,
+        store: Store<EntityStore>,
+        ref: Ref<EntityStore>,
+        playerRef: PlayerRef,
+        world: World
+    ) {
+        val teamRef = store.getComponent(ref, TeamRef.componentType)?.teamRef
+        if (teamRef == null) {
+            context.sendMessage(Message.raw("You are not on a team."))
+            return
+        }
+
+        store.removeComponentIfExists(ref, TeamRef.componentType)
+
+        if (teamRef.isValid()) {
+            val data = store.getComponent(teamRef, TeamData.componentType)
+            val name = data?.name ?: "?"
+            store.getComponent(teamRef, TeamMembers.componentType)?.members?.remove(ref)
+
+            val members = store.getComponent(teamRef, TeamMembers.componentType)?.members ?: emptyList()
+            for (member in members) {
+                val memberPlayer = store.getComponent(member, PlayerRef.getComponentType()) ?: continue
+                memberPlayer.sendMessage(Message.raw("${playerRef.username} left team '$name'."))
+            }
+        }
+    }
+}
+
+/** Lists an instance's teams: `/minigame team list [--game=<id>]`. */
+class TeamListCommand : AbstractWorldCommand("list", "minigame.commands.team.list.desc") {
+
+    private val gameArg = withOptionalArg("game", "minigame.commands.game.desc", ArgTypes.INTEGER)
+
+    override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
+        val targetId = MinigameCommand.targetInstance(context, gameArg)
+        val target = MinigameCommand.snapshot(store)
+            .filter { it.isLive && (targetId == null || it.id == targetId) }
+            .firstOrNull()
+        if (target == null) {
+            context.sendMessage(
+                if (targetId != null) Message.raw("Instance #$targetId does not exist or is not running.")
+                else Message.raw("No running instances.")
+            )
+            return
+        }
+
+        val teams = Teams.of(store, target.ref)
+        context.sendMessage(
+            if (teams.isEmpty()) Message.raw("Instance #${target.id} has no teams yet.")
+            else Message.raw(
+                teams.joinToString(
+                    prefix = "Instance #${target.id} teams: ",
+                    transform = { "'${it.data.name}' (${it.data.score} pts, ${memberCount(store, it.ref)} player(s))" }
+                )
+            )
+        )
+    }
+
+    private fun memberCount(store: Store<EntityStore>, teamRef: Ref<EntityStore>): Int =
+        store.getComponent(teamRef, TeamMembers.componentType)?.members?.size ?: 0
 }

@@ -12,6 +12,9 @@ import java.util.function.BiConsumer
  * Bulk-operation helper for all players in a minigame instance.
  *
  * NOT a component — a short-lived utility scoped to one Store + controller.
+ *
+ * Only entities with a [PlayerRef] count: team entities also carry
+ * `InMinigame` (linking them to their instance) but are not players.
  */
 class PlayerSet(
     private val store: Store<EntityStore>,
@@ -22,9 +25,9 @@ class PlayerSet(
         val consumer = BiConsumer<ArchetypeChunk<EntityStore>, CommandBuffer<EntityStore>> { chunk, _ ->
             for (i in 0 until chunk.size()) {
                 val inMinigame = chunk.getComponent(i, InMinigame.componentType) ?: continue
-                if (inMinigame.controllerRef == controllerRef) {
-                    result.add(chunk.getReferenceTo(i))
-                }
+                if (inMinigame.controllerRef != controllerRef) continue
+                if (chunk.getComponent(i, PlayerRef.getComponentType()) == null) continue
+                result.add(chunk.getReferenceTo(i))
             }
         }
         store.forEachChunk(Archetype.of(InMinigame.componentType), consumer)

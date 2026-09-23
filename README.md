@@ -35,7 +35,12 @@ Second vertical slice implemented:
   - `status` — `#<id> gameType=... phase=... players=...` per instance
   - `join [--game=<id>]` — joins a specific instance or the lowest-id joinable
   - `leave`
-- Integration tests: 16 `@HytaleTest` suites-methods run inside a real server
+  - `team create <name> [--game=<id>]`, `team join <name>`, `team leave`,
+    `team list [--game=<id>]` — teams are per-instance entities (`TeamData` +
+    `TeamMembers` + `InMinigame` -> instance); players carry `TeamRef` -> team;
+    names are unique per instance, not globally; instance cleanup releases
+    teams and memberships
+- Integration tests: 26 `@HytaleTest` methods run inside a real server
   via [hytest](https://github.com/ginco-org/hytest) (`./gradlew hytaleTest`);
   hytest loads the real plugin from the merged test jar (SubPlugins manifest),
   so nothing about the framework is stubbed or re-mounted in the harness.

@@ -13,7 +13,9 @@ import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.Role
+import gg.ginco.minigame.component.TeamRef
 import gg.ginco.minigame.util.PlayerSet
+import gg.ginco.minigame.util.Teams
 import java.util.function.BiConsumer
 
 /**
@@ -83,6 +85,12 @@ class PhaseSystem : TickingSystem<EntityStore>() {
             for (player in players) {
                 store.removeComponentIfExists(player, InMinigame.componentType)
                 store.removeComponentIfExists(player, Role.componentType)
+                store.removeComponentIfExists(player, TeamRef.componentType)
+            }
+            // Team entities carry InMinigame -> this controller; they must not
+            // outlive the instance.
+            for (team in Teams.of(store, ref)) {
+                store.removeEntity(team.ref, RemoveReason.REMOVE)
             }
             store.removeEntity(ref, RemoveReason.REMOVE)
         }
