@@ -42,6 +42,9 @@ Second vertical slice implemented:
     teams and memberships
   - `region add <type> [--game=<id>]`, `region list [--game=<id>]`,
     `region clear [--type=<type>]` — in-game marker creation at your position
+  - disconnect semantics: a player who disconnects is released like
+    `/minigame leave` (membership, team roster, presence) and remaining
+    members are told — rejoin flows use hytest's fixed-identity reconnect
 
 ## Regions are data, not behaviour
 

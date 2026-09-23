@@ -128,10 +128,11 @@ class MinigameRegionEventsTest {
         }
 
         alice.teleport(15.0, 64.0, 15.0).join() // into the death zone, pre-game
+        // succeedWhen is asynchronous — read polled state INSIDE the block.
         t.succeedWhen {
             t.assertTrue(enters.isNotEmpty(), "enter should fire even while Waiting")
+            t.assertEquals("death", enters.single().type, "type should be death")
         }
-        t.assertEquals("death", enters.single().type, "type should be death")
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(t.world)
             val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!

@@ -1,0 +1,78 @@
+# CI for the minigame framework.
+#
+# `build` compiles the plugin and its integration-test sources — no Hytale
+# account needed. `integration` boots a real server and runs the suite, which
+# needs a cached Hytale `auth:server` token (repository secret
+# HYTALE_TOKEN_JSON, written to the path hytest's GameSession reads) — so it
+# only does real work on main pushes and manual dispatch.
+#
+# The integration tests consume hytest as a composite build from a SIBLING
+# checkout (../hytest) — both repositories are checked out side by side here.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (plugin + test sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ginco-org/hytest
+          path: hytest
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile plugin and test sources
+        run: ./gradlew compileKotlin compileHytaleTestKotlin jar
+
+  integration:
+    name: Integration (suite on a real server)
+    needs: build
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ginco-org/hytest
+          path: hytest
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Check for Hytale token secret
+        id: token
+        env:
+          HYTALE_TOKEN_JSON: ${{ secrets.HYTALE_TOKEN_JSON }}
+        run: |
+          if [ -n "$HYTALE_TOKEN_JSON" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "HYTALE_TOKEN_JSON not set — skipping integration tests."
+          fi
+      - name: Install Hytale token for hytest
+        if: steps.token.outputs.available == 'true'
+        env:
+          HYTALE_TOKEN_JSON: ${{ secrets.HYTALE_TOKEN_JSON }}
+        run: |
+          mkdir -p ~/.local/share/hygradle
+          printf '%s' "$HYTALE_TOKEN_JSON" > ~/.local/share/hygradle/token-server.json
+      - name: Run integration suite
+        if: steps.token.outputs.available == 'true'
+        run: ./gradlew hytaleTest

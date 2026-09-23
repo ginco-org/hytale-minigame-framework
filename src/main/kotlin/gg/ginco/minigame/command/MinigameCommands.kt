@@ -28,6 +28,7 @@ import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.component.TeamMembers
 import gg.ginco.minigame.component.TeamRef
+import gg.ginco.minigame.util.Membership
 import gg.ginco.minigame.util.PlayerSet
 import gg.ginco.minigame.util.Teams
 import java.util.function.BiConsumer
@@ -320,25 +321,13 @@ class LeaveCommand : AbstractPlayerCommand("leave", "minigame.commands.leave.des
         playerRef: PlayerRef,
         world: World
     ) {
-        val inMinigame = store.getComponent(ref, InMinigame.componentType)
-        if (inMinigame == null) {
+        val controllerRef = Membership.release(store, ref)
+        if (controllerRef == null) {
             context.sendMessage(Message.raw("You are not in a minigame."))
             return
         }
 
-        val controllerRef = inMinigame.controllerRef
-        // Leaving the minigame also leaves the team (roster must not keep a
-        // player who is no longer in the instance).
-        val teamRef = store.getComponent(ref, TeamRef.componentType)?.teamRef
-        if (teamRef != null && teamRef.isValid()) {
-            store.getComponent(teamRef, TeamMembers.componentType)?.members?.remove(ref)
-        }
-        store.removeComponentIfExists(ref, InMinigame.componentType)
-        store.removeComponentIfExists(ref, Role.componentType)
-        store.removeComponentIfExists(ref, TeamRef.componentType)
-        store.removeComponentIfExists(ref, RegionPresence.componentType)
-
-        if (controllerRef != null && controllerRef.isValid()) {
+        if (controllerRef.isValid()) {
             PlayerSet(store, controllerRef).sendMessage(Message.raw("${playerRef.username} left the minigame."))
         }
     }
