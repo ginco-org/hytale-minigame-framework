@@ -1,3 +1,4 @@
+import org.gradle.api.file.DuplicatesStrategy
 plugins {
     // hygradle comes onto the classpath via gg.ginco.hygradle.settings (0.5.0) in
     // settings.gradle.kts, so no version is declared here.
@@ -18,6 +19,13 @@ dependencies {
     implementation("gg.ginco:hytale-codec-runtime:1.1.0")
     ksp("gg.ginco:hytale-codec-processor:1.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+}
+
+// bundleDependencies packs several jars together (kotlinx-serialization is
+// multi-release): duplicate module-info/class entries are expected and must
+// be excluded rather than failing the jar task.
+tasks.named<org.gradle.api.tasks.bundling.Jar>("jar") {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 hytale {
