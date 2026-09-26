@@ -1,10 +1,13 @@
 package gg.ginco.minigame
 
+import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.hytest.runtime.api.HytaleTest
 import gg.ginco.hytest.runtime.api.HytaleTestHelper
 import gg.ginco.hytest.runtime.player.SimulatedPlayer
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamMembers
+import gg.ginco.minigame.component.TeamRef
+import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.hytaletest.MinigameTestHarness
 import gg.ginco.minigame.hytaletest.Players
 import gg.ginco.minigame.util.Teams
@@ -27,9 +30,9 @@ class MinigameDisconnectTest {
         }!!
     }
 
-    /** Disconnecting releases membership and the team roster slot, and tells the remaining members. */
+    /** Disconnecting PRESERVES membership: roster slot, team link record, instance alive. */
     @HytaleTest(timeoutSeconds = 60)
-    fun disconnectReleasesMembershipAndRoster(t: HytaleTestHelper) {
+    fun disconnectPreservesMembershipAndRoster(t: HytaleTestHelper) {
         val alice = player(t)
         val bob = player(t, "Bob")
         val instanceId = createInstance(t, alice, "arena")
@@ -42,28 +45,131 @@ class MinigameDisconnectTest {
         alice.disconnect()
 
         val world = t.world
-        // NOTE: the departed player's ENTITY is removed by the server, so the
-        // observable post-disconnect leak is the team roster on the (still
-        // alive) team entity — that is what the release handler must clean.
         t.assertEventually {
             t.runOnWorld {
                 val store = MinigameTestHarness.storeOf(world)
                 val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
+                // The team roster KEEPS the departed player's uuid until the
+                // minigame ends — that is the preserved membership.
                 val roster = store.getComponent(
                     Teams.findByName(store, controller, "red")!!.ref,
                     TeamMembers.componentType,
                 )?.members?.size
-                t.assertEquals(0, roster, "the team roster must not keep the departed player")
+                t.assertEquals(1, roster, "the roster must preserve the departed player")
+                val preserved = store.getComponent(controller, gg.ginco.minigame.component.PreservedMembers.componentType)?.members
+                t.assertEquals(1, preserved?.size, "a preserved membership record must exist")
+                t.assertEquals("Alice", preserved?.single()?.name, "record should carry the player name")
                 t.assertEquals(instanceId, MinigameTestHarness.instanceIdOf(store, controller),
                     "the instance stays alive and is the same one")
             }
         }
-        // The announcement lands on the world thread with the release —
+        // The announcement lands on the world thread with the preservation —
         // assertEventually, not an immediate assert (async race).
         t.assertEventually {
             t.assertTrue(bob.sawMessage("Alice disconnected."),
                 "remaining members should be told, got: ${bob.receivedMessages()}")
         }
+        t.succeed()
+    }
+
+    /** A returning player is restored into their exact instance, role and team via join. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun reconnectedPlayerRestoresMembership(t: HytaleTestHelper) {
+        val uuid = java.util.UUID.randomUUID()
+        val alice = t.spawnSimulatedPlayer("Alice", uuid)
+        MinigameTestHarness.grantAdmin(alice.ref())
+
+        val instanceId = createInstance(t, alice, "arena")
+        alice.runCommand("minigame team create red").join()
+        alice.runCommand("minigame join").join()
+        alice.runCommand("minigame team join red").join()
+        alice.disconnect()
+
+        val world = t.world
+        t.assertEventually {
+            t.runOnWorld {
+                val store = MinigameTestHarness.storeOf(world)
+                val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
+                t.assertEquals(1, store.getComponent(controller,
+                    gg.ginco.minigame.component.PreservedMembers.componentType)?.members?.size,
+                    "preserved record must exist before rejoin")
+            }
+        }
+
+        val alice2 = alice.reconnect().join()
+        t.assertEquals(uuid, alice2.uuid, "reconnect must preserve the identity")
+        MinigameTestHarness.grantAdmin(alice2.ref())
+
+        alice2.runCommand("minigame join").join() // restores, not a fresh join
+        t.assertEventually {
+            t.runOnWorld {
+                val store = MinigameTestHarness.storeOf(world)
+                val ref = MinigameTestHarness.refOf(alice2.ref())
+                val target = MinigameTestHarness.inMinigameOf(store, ref)?.controllerRef
+                t.assertNotNull(target, "the returning player must be restored")
+                t.assertEquals(instanceId, target?.let { MinigameTestHarness.instanceIdOf(store, it) },
+                    "restored into the SAME instance")
+                val teamRef = store.getComponent(ref, TeamRef.componentType)?.teamRef
+                t.assertEquals("red", teamRef?.let { store.getComponent(it, TeamData.componentType)?.name },
+                    "team membership restored")
+                val roster = teamRef?.let { store.getComponent(it, TeamMembers.componentType)?.members?.size }
+                t.assertEquals(1, roster, "roster must not duplicate the restored player")
+                val role = store.getComponent(ref, Role.componentType)
+                t.assertEquals(Role.Kind.PARTICIPANT, role?.kind, "role restored")
+            }
+        }
+        t.assertTrue(alice2.sawMessage("Alice rejoined the minigame."),
+            "rejoin should be announced, got: ${alice2.receivedMessages()}")
+        t.succeed()
+    }
+
+    /** When the minigame ENDS, preserved memberships are released with it. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun endedInstanceReleasesPreservedMembership(t: HytaleTestHelper) {
+        val alice = player(t)
+        val uuid = java.util.UUID.randomUUID()
+        val aliceHandle = t.spawnSimulatedPlayer("Alice", uuid)
+        MinigameTestHarness.grantAdmin(aliceHandle.ref())
+
+        val instanceId = createInstance(t, aliceHandle, "arena")
+        aliceHandle.runCommand("minigame team create red").join()
+        aliceHandle.runCommand("minigame join").join()
+        aliceHandle.runCommand("minigame team join red").join()
+        aliceHandle.disconnect()
+
+        val world = t.world
+        t.assertEventually {
+            t.runOnWorld {
+                val store = MinigameTestHarness.storeOf(world)
+                val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
+                t.assertEquals(1, store.getComponent(controller,
+                    gg.ginco.minigame.component.PreservedMembers.componentType)?.members?.size,
+                    "preserved record must exist")
+            }
+        }
+
+        // The minigame ends while the player is away.
+        alice.runCommand("minigame stop").join()
+        t.assertEventually {
+            t.runOnWorld {
+                val store = MinigameTestHarness.storeOf(world)
+                t.assertTrue(MinigameTestHarness.controllers(store).isEmpty(),
+                    "instance should be gone")
+            }
+        }
+
+        // The returning player finds nothing preserved and nothing joinable.
+        val alice2 = aliceHandle.reconnect().join()
+        MinigameTestHarness.grantAdmin(alice2.ref())
+        alice2.runCommand("minigame join").join()
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val ref = MinigameTestHarness.refOf(alice2.ref())
+            t.assertEquals(null, MinigameTestHarness.inMinigameOf(store, ref),
+                "ended instance must not restore membership")
+        }
+        t.assertTrue(alice2.sawMessage("No joinable instance right now"),
+            "rejoin into an ended game should be rejected, got: ${alice2.receivedMessages()}")
         t.succeed()
     }
 
@@ -116,54 +222,5 @@ class MinigameDisconnectTest {
         t.succeed()
     }
 
-    /**
-     * Full round trip with hytest's fixed-identity primitive: a released
-     * player reconnects with the SAME uuid and rejoins the still-running
-     * instance like anyone else (state preservation across rejoin is a
-     * future feature — today membership is simply granted again).
-     */
-    @HytaleTest(timeoutSeconds = 60)
-    fun reconnectedPlayerCanRejoin(t: HytaleTestHelper) {
-        val uuid = java.util.UUID.randomUUID()
-        val alice = t.spawnSimulatedPlayer("Alice", uuid)
-        MinigameTestHarness.grantAdmin(alice.ref())
-
-        val instanceId = createInstance(t, alice, "arena")
-        alice.runCommand("minigame team create red").join()
-        alice.runCommand("minigame join").join()
-        alice.runCommand("minigame team join red").join()
-        alice.disconnect()
-
-        val world = t.world
-        // Post-disconnect the player ENTITY is gone — the observable leak is
-        // the team roster (the release handler must have cleaned it).
-        t.assertEventually {
-            t.runOnWorld {
-                val store = MinigameTestHarness.storeOf(world)
-                val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
-                val roster = store.getComponent(
-                    Teams.findByName(store, controller, "red")!!.ref,
-                    TeamMembers.componentType,
-                )?.members?.size
-                t.assertEquals(0, roster, "roster must be released before reconnecting")
-            }
-        }
-
-        val alice2 = alice.reconnect().join()
-        t.assertEquals(uuid, alice2.uuid, "reconnect must preserve the identity")
-        MinigameTestHarness.grantAdmin(alice2.ref()) // re-grant: harmless if the provider remembers the uuid
-
-        alice2.runCommand("minigame join").join()
-        t.assertEventually {
-            t.runOnWorld {
-                val store = MinigameTestHarness.storeOf(world)
-                val ref = MinigameTestHarness.refOf(alice2.ref())
-                val target = MinigameTestHarness.inMinigameOf(store, ref)?.controllerRef
-                t.assertNotNull(target, "the returning player can rejoin")
-                t.assertEquals(instanceId, target?.let { MinigameTestHarness.instanceIdOf(store, it) },
-                    "rejoin lands in the same, still-running instance")
-            }
-        }
-        t.succeed()
-    }
 }
+

@@ -63,4 +63,19 @@ class PlayerSet(
     fun isEmpty(): Boolean = all().isEmpty()
 
     fun isNotEmpty(): Boolean = !isEmpty()
+
+    companion object {
+        /** The player entity carrying [uuid], or null (players not in a world have none). */
+        fun findByUuid(store: Store<EntityStore>, uuid: java.util.UUID): Ref<EntityStore>? {
+            var found: Ref<EntityStore>? = null
+            val consumer = BiConsumer { chunk: ArchetypeChunk<EntityStore>, buffer: CommandBuffer<EntityStore> ->
+                for (i in 0 until chunk.size()) {
+                    val player = chunk.getComponent(i, PlayerRef.getComponentType()) ?: continue
+                    if (player.uuid == uuid) found = chunk.getReferenceTo(i)
+                }
+            }
+            store.forEachChunk(Archetype.of(PlayerRef.getComponentType()), consumer)
+            return found
+        }
+    }
 }

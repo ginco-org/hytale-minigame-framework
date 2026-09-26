@@ -300,6 +300,15 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
             return
         }
 
+        // A returning player with preserved membership comes first: joining
+        // restores their exact instance, role and team.
+        if (Membership.restoreIfPreserved(store, ref, playerRef)) {
+            val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
+            PlayerSet(store, controllerRef!!).sendMessage(
+                Message.raw("${playerRef.username} rejoined the minigame."))
+            return
+        }
+
         val targetId = MinigameCommand.targetInstance(context, gameArg)
         val target = if (targetId != null) {
             MinigameCommand.snapshot(store).firstOrNull { it.id == targetId && it.isJoinable }
@@ -334,7 +343,7 @@ class LeaveCommand : AbstractPlayerCommand("leave", "minigame.commands.leave.des
         playerRef: PlayerRef,
         world: World
     ) {
-        val controllerRef = Membership.release(store, ref)
+        val controllerRef = Membership.leave(store, ref, playerRef)
         if (controllerRef == null) {
             context.sendMessage(Message.raw("You are not in a minigame."))
             return
@@ -445,10 +454,11 @@ class TeamJoinCommand : AbstractPlayerCommand("join", "minigame.commands.team.jo
         }
 
         store.addComponent(ref, TeamRef.componentType, TeamRef(team.ref))
-        roster.add(ref)
+        roster.add(playerRef.uuid) // rosters hold uuids: slots survive disconnects
 
         // Announce to the team including the joiner (already in the roster).
-        for (member in roster) {
+        for (memberUuid in roster) {
+            val member = PlayerSet.findByUuid(store, memberUuid) ?: continue
             val memberPlayer = store.getComponent(member, PlayerRef.getComponentType()) ?: continue
             memberPlayer.sendMessage(Message.raw("${playerRef.username} joined team '$name'."))
         }
@@ -477,12 +487,13 @@ class TeamLeaveCommand : AbstractPlayerCommand("leave", "minigame.commands.team.
             val data = store.getComponent(teamRef, TeamData.componentType)
             val name = data?.name ?: "?"
             val members = store.getComponent(teamRef, TeamMembers.componentType)?.members
-            members?.remove(ref)
+            members?.remove(playerRef.uuid)
 
             // Confirm to the leaver even when they were the last member;
             // announce to whoever remains.
             playerRef.sendMessage(Message.raw("You left team '$name'."))
-            for (member in members ?: emptyList()) {
+            for (memberUuid in members ?: emptyList()) {
+                val member = PlayerSet.findByUuid(store, memberUuid) ?: continue
                 val memberPlayer = store.getComponent(member, PlayerRef.getComponentType()) ?: continue
                 memberPlayer.sendMessage(Message.raw("${playerRef.username} left team '$name'."))
             }

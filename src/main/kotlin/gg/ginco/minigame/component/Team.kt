@@ -1,5 +1,7 @@
 package gg.ginco.minigame.component
 
+import java.util.UUID
+
 import com.hypixel.hytale.codec.Codec
 import com.hypixel.hytale.codec.KeyedCodec
 import com.hypixel.hytale.codec.builder.BuilderCodec
@@ -43,7 +45,8 @@ class TeamRef(
 }
 
 class TeamMembers(
-    val members: MutableList<Ref<EntityStore>> = mutableListOf()
+    /** Member UUIDs — stable across disconnects (entity refs would die). */
+    val members: MutableList<UUID> = mutableListOf()
 ) : Component<EntityStore> {
 
     companion object {

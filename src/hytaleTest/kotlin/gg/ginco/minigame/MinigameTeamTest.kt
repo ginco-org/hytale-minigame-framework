@@ -110,7 +110,7 @@ class MinigameTeamTest {
                 "TeamRef should point at the 'red' team")
             val roster = teamRef?.let { store.getComponent(it, TeamMembers.componentType)?.members }
             t.assertEquals(1, roster?.size, "roster should list exactly the joiner")
-            t.assertEquals(ref, roster?.single(), "roster should reference the joiner's entity")
+            t.assertEquals(alice.uuid, roster?.single(), "roster should reference the joiner by uuid")
         }
         t.assertTrue(alice.sawMessage("Alice joined team 'red'."),
             "the joiner should hear the team announcement, got: ${alice.receivedMessages()}")

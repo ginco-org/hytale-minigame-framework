@@ -42,17 +42,21 @@ Second vertical slice implemented:
     teams and memberships
   - `region add <type> [--game=<id>]`, `region list [--game=<id>]`,
     `region clear [--type=<type>]` — in-game marker creation at your position
-  - disconnect semantics: a player who disconnects is released like
-    `/minigame leave` (membership, team roster, presence) and remaining
-    members are told — rejoin flows use hytest's fixed-identity reconnect
+  - disconnect semantics: **membership is preserved until the minigame
+    ends** — rosters are uuid-keyed and the instance keeps a preserved-
+    membership record (role included), so a returning player who runs
+    `/minigame join` is restored into their exact instance, role and team.
+    Voluntary `/minigame leave` still releases everything immediately
   - `defs list|reload|save [--game=<id>]` — durable minigame definitions:
     JSON in the plugin data directory (`definitions/<gameTypeId>.json`),
     loaded at boot; `defs save` captures a live instance's teams and markers
     (the in-game editor write path) and `create <gametype>` then spawns new
     instances fully set-up from the definition
-  - disconnect semantics: a player who disconnects is released like
-    `/minigame leave` (membership, team roster, presence) and remaining
-    members are told — rejoin flows use hytest's fixed-identity reconnect
+  - disconnect semantics: **membership is preserved until the minigame
+    ends** — rosters are uuid-keyed and the instance keeps a preserved-
+    membership record (role included), so a returning player who runs
+    `/minigame join` is restored into their exact instance, role and team.
+    Voluntary `/minigame leave` still releases everything immediately
   - `defs list|reload|save [--game=<id>]` — durable minigame definitions:
     JSON in the plugin data directory (`definitions/<gameTypeId>.json`),
     loaded at boot; `defs save` captures a live instance's teams and markers

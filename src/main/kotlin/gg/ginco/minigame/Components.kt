@@ -9,6 +9,7 @@ import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.RegionMarker
 import gg.ginco.minigame.component.RegionPresence
+import gg.ginco.minigame.component.PreservedMembers
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.component.TeamMembers
@@ -34,6 +35,7 @@ object Components {
         InMinigame.componentType = registry.registerComponent(InMinigame::class.java) { InMinigame() }
         InstanceId.componentType = registry.registerComponent(InstanceId::class.java) { InstanceId() }
         RegionPresence.componentType = registry.registerComponent(RegionPresence::class.java) { RegionPresence() }
+        PreservedMembers.componentType = registry.registerComponent(PreservedMembers::class.java) { PreservedMembers() }
 
         TeamData.componentType = registry.registerComponent(TeamData::class.java) { TeamData() }
         TeamRef.componentType = registry.registerComponent(TeamRef::class.java) { TeamRef() }

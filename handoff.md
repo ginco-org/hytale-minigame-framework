@@ -131,4 +131,14 @@ ever be stored. Redesigned as single concrete classes.
     same-named instances will pick the definition up (correct behaviour!).
 15. Definition files: kotlinx-serialization JSON (data-dir storage v1); the
     asset-pack backend swap only touches DefinitionStore's file I/O.
+16. Membership rule (product decision): PRESERVED until the minigame ends.
+    Disconnect keeps the team-roster uuid slot + a PreservedMembers record on
+    the controller; `/minigame join` restores instance/role/team via
+    Membership.restoreIfPreserved. Voluntary leave still releases. Team
+    rosters are UUID-keyed (entity refs die on disconnect).
+17. RECURRING PITFALL (third occurrence): never write to the store inside a
+    forEachChunk consumer — the processing lock makes writes throw and
+    CommandBuffer-less systems swallow the failure. Scan into snapshots,
+    mutate after. restoreIfPreserved originally did writes in the consumer
+    and silently failed.
 
