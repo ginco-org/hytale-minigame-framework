@@ -28,6 +28,8 @@ import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.component.TeamMembers
 import gg.ginco.minigame.component.TeamRef
+import gg.ginco.minigame.definition.DefinitionStore
+import gg.ginco.minigame.command.DefsCommand
 import gg.ginco.minigame.util.Membership
 import gg.ginco.minigame.util.PlayerSet
 import gg.ginco.minigame.util.Teams
@@ -71,6 +73,7 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
         addSubCommand(LeaveCommand())
         addSubCommand(TeamCommand())
         addSubCommand(RegionCommand())
+        addSubCommand(DefsCommand())
     }
 
         /** Immutable snapshot of one instance's state (safe to keep after a scan). */
@@ -167,7 +170,17 @@ class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.d
             return
         }
 
-        context.sendMessage(Message.raw("Created instance #${id.value} (gameType=$gameTypeId, phase=Waiting)."))
+        // A definition turns the bare instance into a fully set-up one:
+        // every team and marker the game type describes, spawned in.
+        val definition = DefinitionStore.get(gameTypeId)
+        if (definition != null) {
+            DefinitionStore.spawnInto(store, ref, definition)
+            context.sendMessage(
+                Message.raw("Created instance #${id.value} from definition '${definition.gameTypeId}' " +
+                    "(${definition.teams.size} team(s), ${definition.markers.size} marker(s))."))
+        } else {
+            context.sendMessage(Message.raw("Created instance #${id.value} (gameType=$gameTypeId, phase=Waiting)."))
+        }
     }
 }
 
@@ -382,14 +395,7 @@ class TeamCreateCommand : AbstractWorldCommand("create", "minigame.commands.team
             return
         }
 
-        val archetype = TEAM_ARCHETYPE
-        @Suppress("UNCHECKED_CAST")
-        val components = arrayOfNulls<Component<EntityStore>>(archetype.length())
-        components[TeamData.componentType.index] = TeamData(name = name)
-        components[TeamMembers.componentType.index] = TeamMembers()
-        components[InMinigame.componentType.index] = InMinigame(target.ref)
-        val holder = store.registry.newHolder(archetype, components as Array<Component<EntityStore>>)
-        val ref = store.addEntity(holder, AddReason.SPAWN)
+        val ref = Teams.createTeam(store, target.ref, TeamData(name = name))
         if (ref == null) {
             context.sendMessage(Message.raw("Failed to create team."))
             return
@@ -398,12 +404,6 @@ class TeamCreateCommand : AbstractWorldCommand("create", "minigame.commands.team
         context.sendMessage(Message.raw("Created team '$name' for instance #${target.id}."))
     }
 
-    private companion object {
-        /** Created via newHolder with exactly these components; see CreateCommand for slot rules. */
-        val TEAM_ARCHETYPE: Archetype<EntityStore> by lazy {
-            Archetype.of(TeamData.componentType, TeamMembers.componentType, InMinigame.componentType)
-        }
-    }
 }
 
 /** Joins the sender to a team of their own instance: `/minigame team join <name>`. */

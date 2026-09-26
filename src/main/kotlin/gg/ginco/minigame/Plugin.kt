@@ -4,6 +4,7 @@ import com.hypixel.hytale.server.core.plugin.JavaPlugin
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent
 import gg.ginco.minigame.command.MinigameCommand
+import gg.ginco.minigame.definition.DefinitionStore
 import gg.ginco.minigame.system.PhaseSystem
 import gg.ginco.minigame.system.RegionSystem
 import gg.ginco.minigame.util.Membership
@@ -27,7 +28,8 @@ class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
 
     override fun start() {
         commandRegistry.registerCommand(MinigameCommand())
-        logger.at(Level.INFO).log("MinigameFramework started")
+        val loaded = DefinitionStore.init(dataDirectory)
+        logger.at(Level.INFO).log("MinigameFramework started — $loaded minigame definition(s) loaded")
     }
 
     override fun shutdown() {

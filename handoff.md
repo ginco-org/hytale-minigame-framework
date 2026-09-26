@@ -123,4 +123,12 @@ ever be stored. Redesigned as single concrete classes.
 12. `succeedWhen` is async (see 5) — the polished alternative is hytest's
     `assertEventually(timeout) { }` which BLOCKS until the condition holds;
     prefer it whenever the test must continue after the wait.
+13. The merged test jar now bundles the plugin's runtimeClasspath jars — any
+    new runtime dependency (e.g. kotlinx-serialization) just works in tests.
+14. Definitions live in the plugin data dir which is FRESH PER RUN (workdir
+    is a temp dir) but SHARED ACROSS TESTS within one server boot. Tests that
+    save definitions must use unique game-type ids, or later tests creating
+    same-named instances will pick the definition up (correct behaviour!).
+15. Definition files: kotlinx-serialization JSON (data-dir storage v1); the
+    asset-pack backend swap only touches DefinitionStore's file I/O.
 

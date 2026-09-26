@@ -49,29 +49,15 @@ class RegionCommand : AbstractCommandCollection("region", "minigame.commands.reg
         const val MARKER_HALF_EXTENT = 2.0
 
         /**
-         * Creates a marker entity of [type] centred on [position], linked to
-         * [instanceRef]. Returns the marker ref, or null when the store
-         * rejected the entity.
+         * Creates a marker of [type] centred on [position] with the default
+         * half-extent. Returns the marker ref, or null on rejection.
          */
         fun createMarker(
             store: Store<EntityStore>,
             instanceRef: Ref<EntityStore>,
             type: String,
             position: Vector3d,
-        ): Ref<EntityStore>? {
-            val extent = MARKER_HALF_EXTENT
-            val archetype = Archetype.of(Bounds.componentType, InMinigame.componentType, RegionMarker.componentType)
-            @Suppress("UNCHECKED_CAST")
-            val components = arrayOfNulls<Component<EntityStore>>(archetype.length())
-            components[Bounds.componentType.index] = Bounds(
-                Vector3d(position.x - extent, position.y - extent, position.z - extent),
-                Vector3d(position.x + extent, position.y + extent, position.z + extent),
-            )
-            components[InMinigame.componentType.index] = InMinigame(instanceRef)
-            components[RegionMarker.componentType.index] = RegionMarker(type)
-            val holder = store.registry.newHolder(archetype, components as Array<Component<EntityStore>>)
-            return store.addEntity(holder, AddReason.SPAWN)
-        }
+        ): Ref<EntityStore>? = Regions.createMarker(store, instanceRef, type, position)
 
         /**
          * The live instance an untargeted marker command applies to: the

@@ -45,9 +45,19 @@ Second vertical slice implemented:
   - disconnect semantics: a player who disconnects is released like
     `/minigame leave` (membership, team roster, presence) and remaining
     members are told — rejoin flows use hytest's fixed-identity reconnect
+  - `defs list|reload|save [--game=<id>]` — durable minigame definitions:
+    JSON in the plugin data directory (`definitions/<gameTypeId>.json`),
+    loaded at boot; `defs save` captures a live instance's teams and markers
+    (the in-game editor write path) and `create <gametype>` then spawns new
+    instances fully set-up from the definition
   - disconnect semantics: a player who disconnects is released like
     `/minigame leave` (membership, team roster, presence) and remaining
     members are told — rejoin flows use hytest's fixed-identity reconnect
+  - `defs list|reload|save [--game=<id>]` — durable minigame definitions:
+    JSON in the plugin data directory (`definitions/<gameTypeId>.json`),
+    loaded at boot; `defs save` captures a live instance's teams and markers
+    (the in-game editor write path) and `create <gametype>` then spawns new
+    instances fully set-up from the definition
 
 ## Regions are data, not behaviour
 
@@ -72,6 +82,11 @@ lasertag-base`, anything. `Regions.markersOf(store, instance, type)` /
 `markerAt(...)` are the query surface for plugin code. One reserved id
 exists: `spawn` markers are the kind the framework acts on itself (teleport
 targets when an instance starts).
+
+Definitions are the durability layer for all of this: markers and teams
+placed in-game can be captured with `defs save` and reload on every boot
+(plain JSON in the data directory; the Hytale asset-pack backend may replace
+the file I/O later — the schema is already its shape).
 - Integration tests: 37 `@HytaleTest` methods run inside a real server
   via [hytest](https://github.com/ginco-org/hytest) (`./gradlew hytaleTest`);
   hytest loads the real plugin from the merged test jar (SubPlugins manifest),

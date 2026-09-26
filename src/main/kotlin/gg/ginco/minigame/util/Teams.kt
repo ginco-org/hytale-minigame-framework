@@ -1,13 +1,17 @@
 package gg.ginco.minigame.util
 
+import com.hypixel.hytale.component.AddReason
 import com.hypixel.hytale.component.Archetype
 import com.hypixel.hytale.component.ArchetypeChunk
 import com.hypixel.hytale.component.CommandBuffer
+import com.hypixel.hytale.component.Component
+import com.hypixel.hytale.component.ComponentType
 import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.TeamData
+import gg.ginco.minigame.component.TeamMembers
 import java.util.function.BiConsumer
 
 /**
@@ -20,6 +24,28 @@ import java.util.function.BiConsumer
  * in `TeamMembers`.
  */
 object Teams {
+
+    /** Archetype of a team entity: exactly these three components. */
+    val TEAM_ARCHETYPE: Archetype<EntityStore> by lazy {
+        Archetype.of(TeamData.componentType, TeamMembers.componentType, InMinigame.componentType)
+    }
+
+    /**
+     * Creates a team entity linked to [controllerRef] carrying [data].
+     * Returns the team ref, or null when the store rejected the entity.
+     * (Holder arrays are slot-indexed by ComponentType — see CreateCommand.)
+     */
+    fun createTeam(store: Store<EntityStore>, controllerRef: Ref<EntityStore>, data: TeamData): Ref<EntityStore>? {
+        val archetype = TEAM_ARCHETYPE
+        @Suppress("UNCHECKED_CAST")
+        val components = arrayOfNulls<Component<EntityStore>>(archetype.length())
+        components[TeamData.componentType.index] = data
+        components[TeamMembers.componentType.index] = TeamMembers()
+        components[InMinigame.componentType.index] = InMinigame(controllerRef)
+        val holder = store.registry.newHolder(archetype, components as Array<Component<EntityStore>>)
+        return store.addEntity(holder, AddReason.SPAWN)
+    }
+
 
     /** Snapshot of (ref, data) for every team of [controllerRef], ordered by creation. */
     fun of(store: Store<EntityStore>, controllerRef: Ref<EntityStore>): List<TeamSnapshot> {
