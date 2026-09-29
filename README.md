@@ -98,7 +98,13 @@ has no spectator game mode), and `Roles.disqualify` swaps in
 `Role.disqualified(reason)`. The framework applies mechanics; WHEN they
 apply stays consumer-side. Mechanics are entity state — re-apply after a
 preserved-membership restore.
-- Integration tests: 47 `@HytaleTest` methods run inside a real server
+
+Stats are the same shape: `Stats.add/addForPlayer/total/breakdown` over
+arbitrary consumer-chosen stat ids, scoped to an instance, per-player
+counters uuid-keyed (they survive disconnects via preserved membership),
+released with the instance. `/minigame stats [--game=<id>]` prints totals
+and per-player breakdowns by name.
+- Integration tests: 52 `@HytaleTest` methods run inside a real server
   via [hytest](https://github.com/ginco-org/hytest) (`./gradlew hytaleTest`);
   hytest loads the real plugin from the merged test jar (SubPlugins manifest),
   so nothing about the framework is stubbed or re-mounted in the harness.

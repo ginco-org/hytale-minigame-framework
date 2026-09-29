@@ -5,6 +5,7 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.Bounds
 import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
+import gg.ginco.minigame.component.InstanceStats
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.RegionMarker
@@ -36,6 +37,7 @@ object Components {
         InstanceId.componentType = registry.registerComponent(InstanceId::class.java) { InstanceId() }
         RegionPresence.componentType = registry.registerComponent(RegionPresence::class.java) { RegionPresence() }
         PreservedMembers.componentType = registry.registerComponent(PreservedMembers::class.java) { PreservedMembers() }
+        InstanceStats.componentType = registry.registerComponent(InstanceStats::class.java) { InstanceStats() }
 
         TeamData.componentType = registry.registerComponent(TeamData::class.java) { TeamData() }
         TeamRef.componentType = registry.registerComponent(TeamRef::class.java) { TeamRef() }

@@ -30,6 +30,7 @@ import gg.ginco.minigame.component.TeamMembers
 import gg.ginco.minigame.component.TeamRef
 import gg.ginco.minigame.definition.DefinitionStore
 import gg.ginco.minigame.command.DefsCommand
+import gg.ginco.minigame.command.StatsCommand
 import gg.ginco.minigame.util.Membership
 import gg.ginco.minigame.util.PlayerSet
 import gg.ginco.minigame.util.Teams
@@ -74,6 +75,7 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
         addSubCommand(TeamCommand())
         addSubCommand(RegionCommand())
         addSubCommand(DefsCommand())
+        addSubCommand(StatsCommand())
     }
 
         /** Immutable snapshot of one instance's state (safe to keep after a scan). */

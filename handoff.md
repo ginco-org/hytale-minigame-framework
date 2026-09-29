@@ -162,4 +162,9 @@ ever be stored. Redesigned as single concrete classes.
     they reset when the player entity is rebuilt (disconnect/rejoin).
     Consumers re-apply after Membership.restoreIfPreserved for preserved
     spectator roles.
+21. Stats pillar v1: `Stats.add/addForPlayer/total/playerTotal/breakdown`
+    over an InstanceStats component on the controller (instance-wide +
+    per-player-by-uuid counters, released with the instance, runtime-only —
+    no disk persistence yet). Stat ids are consumer vocabulary. The
+    /minigame stats command is a read-only view.
 
