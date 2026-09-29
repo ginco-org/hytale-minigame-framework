@@ -145,4 +145,13 @@ ever be stored. Redesigned as single concrete classes.
     CommandBuffer-less systems swallow the failure. Scan into snapshots,
     mutate after. restoreIfPreserved originally did writes in the consumer
     and silently failed.
+18. CI integration is ~30 min by measurement, not by accident: the server's
+    world-removal pipeline costs ~30s per per-test world on 2-core runners
+    (5s "waiting for loading chunks" bounded timeout — fake channels never
+    ACK — plus ~25s chunk-save phase). Both workflows now run with
+    `concurrency: ci-${{ github.ref }}` + `cancel-in-progress: true` (new
+    pushes cancel superseded runs), forward server logs
+    (`-PhytestLogs` + showStandardStreams), and the runtime emits per-test
+    "PASSED in Xms" lines so regressions are attributable. Iterate locally;
+    let CI confirm.
 
