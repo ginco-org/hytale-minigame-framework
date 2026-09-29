@@ -21,9 +21,15 @@ permissions:
 
 # The Hytale refresh token is use-once rotated (see hytest's ci.yml rationale):
 # serialize integration runs and carry the rotated token forward via the cache.
+# Per-ref: a new push cancels the superseded run of the same branch — the
+# integration suite costs ~30 min on a 2-core runner (world-disposal pipeline:
+# 5s chunk-load timeout + ~25s chunk save per per-test world), so don't burn
+# runners on stale commits. Run the suite locally instead: ~1 min end to end.
+# The Hytale refresh-token rotation stays safe: integration only runs on
+# main/dispatch, and warm server-cache runs never touch the OAuth token.
 concurrency:
-  group: hytale-token-rotation
-  cancel-in-progress: false
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
