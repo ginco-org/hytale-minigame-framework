@@ -142,4 +142,4 @@ jobs:
           fi
       - name: Run integration suite
         if: steps.token.outputs.available == 'true'
-        run: ./gradlew hytaleTest
+        run: ./gradlew hytaleTest -PhytestLogs
