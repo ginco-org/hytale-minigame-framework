@@ -91,7 +91,14 @@ Definitions are the durability layer for all of this: markers and teams
 placed in-game can be captured with `defs save` and reload on every boot
 (plain JSON in the data directory; the Hytale asset-pack backend may replace
 the file I/O later — the schema is already its shape).
-- Integration tests: 37 `@HytaleTest` methods run inside a real server
+
+Role mechanics too: `Roles.spectate/unspectate` apply the mechanical
+spectator state (Creative + flight + hidden from instance members — 0.6.8
+has no spectator game mode), and `Roles.disqualify` swaps in
+`Role.disqualified(reason)`. The framework applies mechanics; WHEN they
+apply stays consumer-side. Mechanics are entity state — re-apply after a
+preserved-membership restore.
+- Integration tests: 47 `@HytaleTest` methods run inside a real server
   via [hytest](https://github.com/ginco-org/hytest) (`./gradlew hytaleTest`);
   hytest loads the real plugin from the merged test jar (SubPlugins manifest),
   so nothing about the framework is stubbed or re-mounted in the harness.

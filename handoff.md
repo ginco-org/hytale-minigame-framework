@@ -154,4 +154,12 @@ ever be stored. Redesigned as single concrete classes.
     (`-PhytestLogs` + showStandardStreams), and the runtime emits per-test
     "PASSED in Xms" lines so regressions are attributable. Iterate locally;
     let CI confirm.
+19. HiddenPlayersManager is INSTANCE-LOCAL state (its own ConcurrentHashMap);
+    construct one and you write to a throwaway set. Always use
+    `playerRef.hiddenPlayersManager` — that cached manager is what the
+    server's player-list module reads.
+20. Role mechanics (Roles.spectate/unspectate/disqualify) are entity state:
+    they reset when the player entity is rebuilt (disconnect/rejoin).
+    Consumers re-apply after Membership.restoreIfPreserved for preserved
+    spectator roles.
 
