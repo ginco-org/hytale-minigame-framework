@@ -1,5 +1,7 @@
 package gg.ginco.minigame.definition
 
+import com.hypixel.hytale.codec.ExtraInfo
+import com.hypixel.hytale.codec.util.RawJsonReader
 import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
@@ -39,7 +41,7 @@ object DefinitionStore {
         Files.list(dir).use { stream ->
             for (file in stream.filter { it.fileName.toString().endsWith(".json") }) {
                 try {
-                    val def = DefinitionJson.decode(Files.readString(file))
+                    val def = decode(Files.readString(file))
                     synchronized(definitions) { definitions[def.gameTypeId] = def }
                     count++
                 } catch (e: Exception) {
@@ -48,6 +50,26 @@ object DefinitionStore {
             }
         }
         return count
+    }
+
+    // ---- codec-based file I/O (hytale-codec generated codecs) --------------
+
+    /** Decodes a definition from JSON text via the generated codec. */
+    private fun decode(text: String): MinigameDefinition {
+        RawJsonReader(text.toCharArray()).use { reader ->
+            return MinigameDefinitionCodec.decodeJson(reader, ExtraInfo())
+                ?: throw IllegalArgumentException("definition decoded to null")
+        }
+    }
+
+    /** Encodes a definition to pretty JSON text via the codec + BSON JSON writer. */
+    private fun encode(definition: MinigameDefinition): String {
+        val bson = MinigameDefinitionCodec.encode(definition, ExtraInfo())
+        val settings = org.bson.json.JsonWriterSettings.builder()
+            .outputMode(org.bson.json.JsonMode.RELAXED)
+            .indent(true)
+            .build()
+        return bson.asDocument().toJson(settings)
     }
 
     fun all(): List<MinigameDefinition> =
@@ -61,7 +83,7 @@ object DefinitionStore {
         synchronized(definitions) { definitions[definition.gameTypeId] = definition }
         val file = dir.resolve(definition.gameTypeId + ".json")
         Files.createDirectories(file.parent)
-        Files.writeString(file, DefinitionJson.encode(definition))
+        Files.writeString(file, encode(definition))
     }
 
     /**

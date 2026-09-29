@@ -1,7 +1,6 @@
 package gg.ginco.minigame.definition
 
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
+import gg.ginco.jellyparty.codec.annotations.SerializableObject
 
 /**
  * A durable minigame definition: everything needed to spawn an instance's
@@ -13,44 +12,34 @@ import kotlinx.serialization.json.Json
  * configure an instance with markers and teams, save it, and every future
  * instance of that game type reproduces the setup.
  *
- * This is plain data-dir JSON for v1. The storage backend is deliberately
- * swappable: the schema mirrors what a Hytale asset-pack definition would
- * carry, and the hand-written component codecs (Bounds, TeamData) are kept
- * for that move.
+ * Serialization goes through the hytale-codec KSP processor (generated
+ * `MinigameDefinitionCodec` in the companion) — the same codec stack the
+ * server's asset pipeline uses, so moving the storage backend to a real
+ * Hytale asset pack later only touches [DefinitionStore]'s file I/O.
  */
-@Serializable
+@SerializableObject
 data class MinigameDefinition(
-    val gameTypeId: String,
-    val displayName: String = "",
-    val teams: List<TeamDefinition> = emptyList(),
-    val markers: List<MarkerDefinition> = emptyList(),
+    var gameTypeId: String = "",
+    var displayName: String = "",
+    var teams: List<TeamDefinition> = emptyList(),
+    var markers: List<MarkerDefinition> = emptyList(),
 )
 
-@Serializable
+@SerializableObject
 data class TeamDefinition(
-    val name: String,
-    val color: Int = 0xFFFFFF,
-    val maxPlayers: Int = -1,
+    var name: String = "",
+    var color: Int = 0xFFFFFF,
+    var maxPlayers: Int = -1,
 )
 
 /** A region marker: open type id + axis-aligned box. */
-@Serializable
+@SerializableObject
 data class MarkerDefinition(
-    val type: String,
-    val minX: Double,
-    val minY: Double,
-    val minZ: Double,
-    val maxX: Double,
-    val maxY: Double,
-    val maxZ: Double,
+    var type: String = "",
+    var minX: Double = 0.0,
+    var minY: Double = 0.0,
+    var minZ: Double = 0.0,
+    var maxX: Double = 0.0,
+    var maxY: Double = 0.0,
+    var maxZ: Double = 0.0,
 )
-
-object DefinitionJson {
-    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
-
-    fun encode(definition: MinigameDefinition): String = json.encodeToString(
-        MinigameDefinition.serializer(), definition)
-
-    fun decode(text: String): MinigameDefinition = json.decodeFromString(
-        MinigameDefinition.serializer(), text)
-}

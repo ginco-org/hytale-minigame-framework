@@ -129,8 +129,12 @@ ever be stored. Redesigned as single concrete classes.
     is a temp dir) but SHARED ACROSS TESTS within one server boot. Tests that
     save definitions must use unique game-type ids, or later tests creating
     same-named instances will pick the definition up (correct behaviour!).
-15. Definition files: kotlinx-serialization JSON (data-dir storage v1); the
-    asset-pack backend swap only touches DefinitionStore's file I/O.
+15. Definition files: serialized via hytale-codec generated codecs
+    (@SerializableObject on the definition classes -> MinigameDefinitionCodec;
+    decode through RawJsonReader, encode through Codec.encode + BSON JSON
+    writer). The codec lib consumes ginco-org/hytale-codec@main as a
+    composite build (settings.gradle.kts). The asset-pack backend swap only
+    touches DefinitionStore's file I/O.
 16. Membership rule (product decision): PRESERVED until the minigame ends.
     Disconnect keeps the team-roster uuid slot + a PreservedMembers record on
     the controller; `/minigame join` restores instance/role/team via
