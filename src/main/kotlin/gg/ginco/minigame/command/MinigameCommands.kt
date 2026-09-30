@@ -1,5 +1,6 @@
 package gg.ginco.minigame.command
 
+import com.hypixel.hytale.builtin.instances.InstancesPlugin
 import com.hypixel.hytale.component.AddReason
 import com.hypixel.hytale.component.Archetype
 import com.hypixel.hytale.component.ArchetypeChunk
@@ -7,6 +8,8 @@ import com.hypixel.hytale.component.CommandBuffer
 import com.hypixel.hytale.component.Component
 import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.component.Store
+import com.hypixel.hytale.math.vector.Rotation3f
+import com.hypixel.hytale.math.vector.Transform
 import com.hypixel.hytale.server.core.Message
 import com.hypixel.hytale.server.core.command.system.CommandContext
 import com.hypixel.hytale.server.core.command.system.arguments.system.Argument
@@ -14,6 +17,7 @@ import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes
 import com.hypixel.hytale.server.core.command.system.basecommands.AbstractCommandCollection
 import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayerCommand
 import com.hypixel.hytale.server.core.command.system.basecommands.AbstractWorldCommand
+import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import com.hypixel.hytale.server.core.permissions.provider.HytalePermissionsProvider
 import com.hypixel.hytale.server.core.universe.PlayerRef
 import com.hypixel.hytale.server.core.universe.world.World
@@ -31,9 +35,12 @@ import gg.ginco.minigame.component.TeamRef
 import gg.ginco.minigame.definition.DefinitionStore
 import gg.ginco.minigame.command.DefsCommand
 import gg.ginco.minigame.command.StatsCommand
+import gg.ginco.minigame.util.InstanceRegistry
+import gg.ginco.minigame.util.Instances
 import gg.ginco.minigame.util.Membership
 import gg.ginco.minigame.util.PlayerSet
 import gg.ginco.minigame.util.Teams
+import org.joml.Vector3d
 import java.util.function.BiConsumer
 
 /**
@@ -148,6 +155,18 @@ class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.d
 
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
         val gameTypeId = gameTypeArg.get(context)
+        val definition = DefinitionStore.get(gameTypeId)
+
+        // An instance-asset definition plays in its own temporary world; the
+        // controller and teams are created over there instead. Everything that
+        // touches the instance world runs there (its store is a different
+        // thread), so this is the one place a create does not run on the
+        // sender's world thread.
+        val asset = definition?.instanceAsset.orEmpty()
+        if (asset.isNotEmpty()) {
+            createInInstanceWorld(context, world, store, gameTypeId, asset)
+            return
+        }
 
         // Build the components FIRST, placed at their ComponentType's slot.
         //
@@ -175,7 +194,6 @@ class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.d
         // A definition turns the bare instance into a fully set-up one:
         // every team the game type describes, spawned in. (Regions are world
         // content — they already exist in the world.)
-        val definition = DefinitionStore.get(gameTypeId)
         if (definition != null) {
             DefinitionStore.spawnInto(store, ref, definition)
             context.sendMessage(
@@ -184,6 +202,48 @@ class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.d
         } else {
             context.sendMessage(Message.raw("Created instance #${id.value} (gameType=$gameTypeId, phase=Waiting)."))
         }
+    }
+
+    /**
+     * The instance-world path: spawn the game type's temporary world, create the
+     * controller inside it, and spawn its teams there.
+     *
+     * The return point is the sender's position+rotation, mirroring
+     * `/instance spawn` — it is where players are put when they leave.
+     */
+    private fun createInInstanceWorld(
+        context: CommandContext,
+        world: World,
+        store: Store<EntityStore>,
+        gameTypeId: String,
+        asset: String,
+    ) {
+        if (!InstancesPlugin.doesInstanceAssetExist(asset)) {
+            context.sendMessage(
+                Message.raw("Definition '$gameTypeId' names instance asset '$asset', which does not exist."))
+            return
+        }
+
+        // The sender's own entity carries the position; read it here, on the
+        // sender's world thread, before hopping to the instance world.
+        val senderEntity = context.senderAsPlayerRef()
+        val returnPoint = senderEntity?.let {
+            store.getComponent(it, TransformComponent.getComponentType())
+        }?.let { Transform(Vector3d(it.position), Rotation3f(it.rotation)) } ?: Transform()
+
+        val definition = DefinitionStore.get(gameTypeId)
+        val instanceWorld = Instances.createInInstance(world, asset, returnPoint, gameTypeId) { targetStore, controllerRef, _, id ->
+            if (definition != null) DefinitionStore.spawnInto(targetStore, controllerRef, definition)
+        }
+
+        if (instanceWorld == null) {
+            context.sendMessage(Message.raw("Failed to spawn instance world '$asset' for '$gameTypeId'."))
+            return
+        }
+
+        context.sendMessage(
+            Message.raw("Created instance from definition '$gameTypeId' in world '${instanceWorld.name}' " +
+                "(${definition?.teams?.size ?: 0} team(s))."))
     }
 }
 
@@ -195,6 +255,7 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
         ArgTypes.INTEGER, DEFAULT_COUNTDOWN_SECONDS, "minigame.commands.start.seconds.default"
     )
     private val gameArg = withOptionalArg("game", "minigame.commands.game.desc", ArgTypes.INTEGER)
+    private val assetArg = withOptionalArg("asset", "minigame.commands.start.asset.desc", ArgTypes.STRING)
 
     init {
         setPermissionGroups(HytalePermissionsProvider.GROUP_ADMIN)
@@ -203,6 +264,16 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
         val countdownSeconds = secondsArg.get(context).toFloat()
         val targetId = MinigameCommand.targetInstance(context, gameArg)
+
+        // Instances pinned to an instance asset live in their own world, where
+        // this store cannot see them and its thread cannot touch them — so an
+        // admin standing in the lobby names the asset instead, and each matching
+        // instance is started on its own world thread.
+        val asset = if (context.provided(assetArg)) context.get(assetArg) else null
+        if (asset != null) {
+            startInstancesOfAsset(context, asset, countdownSeconds)
+            return
+        }
 
         // Scan first, mutate after: store writes are illegal while forEachChunk
         // holds the processing lock ("Store is currently processing"), and any
@@ -224,6 +295,25 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
         )
     }
 
+    /** Starts every waiting instance of [asset] in its own instance world. */
+    private fun startInstancesOfAsset(context: CommandContext, asset: String, countdownSeconds: Float) {
+        var started = 0
+        for (instanceWorld in Instances.instanceWorlds().filter { Instances.assetNameOf(it) == asset }) {
+            started += Instances.runOnWorld(instanceWorld) {
+                val store = instanceWorld.entityStore.store
+                val waiting = MinigameCommand.snapshot(store).filter { it.phase.kind == Phase.Kind.WAITING }
+                for (instance in waiting) {
+                    store.replaceComponent(instance.ref, Phase.componentType, Phase.countdown(countdownSeconds))
+                }
+                waiting.size
+            }
+        }
+        context.sendMessage(
+            if (started > 0) Message.raw("Started $started instance(s) of '$asset' — $countdownSeconds s countdown.")
+            else Message.raw("No waiting instances of '$asset' are running.")
+        )
+    }
+
     private companion object {
         const val DEFAULT_COUNTDOWN_SECONDS = 5
     }
@@ -233,12 +323,41 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
 class StopCommand : AbstractWorldCommand("stop", "minigame.commands.stop.desc") {
 
     private val gameArg = withOptionalArg("game", "minigame.commands.game.desc", ArgTypes.INTEGER)
+    private val assetArg = withOptionalArg("asset", "minigame.commands.stop.asset.desc", ArgTypes.STRING)
 
     init {
         setPermissionGroups(HytalePermissionsProvider.GROUP_ADMIN)
     }
 
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
+        // Inside an instance world, stop means "end this instance": the world,
+        // its controller and everyone in it go together. Doing the phase swap
+        // first would leave the world running with nobody in it until
+        // PhaseSystem's ending timer expired, and a caller in the lobby could
+        // not reach the controller at all (its store is another thread).
+        if (Instances.isInstanceWorld(world)) {
+            teardownInstanceWorld(context, world, MinigameCommand.targetInstance(context, gameArg))
+            return
+        }
+
+        // From the lobby, instances that live in their own worlds are named by
+        // asset — their ids are per-world and unreachable from here.
+        val asset = if (context.provided(assetArg)) context.get(assetArg) else null
+        if (asset != null) {
+            val worlds = Instances.instanceWorlds().filter { Instances.assetNameOf(it) == asset }
+            if (worlds.isEmpty()) {
+                context.sendMessage(Message.raw("No running instance of '$asset'."))
+                return
+            }
+            for (instanceWorld in worlds) {
+                Instances.runOnWorld(instanceWorld) {
+                    Instances.findController(instanceWorld)?.let { Instances.endInstance(instanceWorld, it) }
+                }
+            }
+            context.sendMessage(Message.raw("Stopped ${worlds.size} instance(s) of '$asset'."))
+            return
+        }
+
         val targetId = MinigameCommand.targetInstance(context, gameArg)
 
         // Scan first, mutate after (see StartCommand — store writes are illegal
@@ -257,6 +376,27 @@ class StopCommand : AbstractWorldCommand("stop", "minigame.commands.stop.desc") 
                 else -> Message.raw("No running instances.")
             }
         )
+    }
+
+    /**
+     * Ends the instance world the command was run from: releases/sends home the
+     * players, removes the controller and flags the world for removal. The world
+     * itself is reaped asynchronously by the builtin's `RemovalSystem`.
+     */
+    private fun teardownInstanceWorld(context: CommandContext, world: World, targetId: Int?) {
+        val controllerRef = Instances.findController(world)
+        if (controllerRef == null) {
+            context.sendMessage(
+                if (targetId != null) Message.raw("Instance #$targetId does not exist or is not running.")
+                else Message.raw("No running instances.")
+            )
+            return
+        }
+
+        // The world is being dismantled around the sender, so the reply has to go
+        // out before it goes away.
+        context.sendMessage(Message.raw("Stopping the minigame in world '${world.name}'…"))
+        Instances.endInstance(world, controllerRef)
     }
 }
 
@@ -290,6 +430,8 @@ class StatusCommand : AbstractWorldCommand("status", "minigame.commands.status.d
 class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc") {
 
     private val gameArg = withOptionalArg("game", "minigame.commands.game.desc", ArgTypes.INTEGER)
+    private val assetArg = withOptionalArg("asset", "minigame.commands.join.asset.desc", ArgTypes.STRING)
+    private val teamArg = withOptionalArg("team", "minigame.commands.join.team.desc", ArgTypes.STRING)
 
     override fun execute(
         context: CommandContext,
@@ -319,20 +461,126 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
             MinigameCommand.defaultJoinable(store)
         }
 
-        if (target == null) {
-            val message = if (targetId != null) {
-                "Instance #$targetId does not exist or is not joinable right now (Waiting or Countdown)."
+        // In-world instance, as before. A sender already linked to a *foreign*
+        // controller (they reconnected into the lobby while still a member) is
+        // sent back to their instance rather than double-joined.
+        if (target != null) {
+            val foreignController = Instances.crossWorldControllerOf(store, ref)
+            if (foreignController == null) {
+                joinInWorld(context, store, ref, playerRef, target)
             } else {
-                "No joinable instance right now (Waiting or Countdown)."
+                // The link survived; the membership components did not (a
+                // reconnected entity is rebuilt). Re-deriving them happens on
+                // arrival, so only the trip is arranged here.
+                InstanceRegistry.remember(playerRef.uuid, world.name)
+                Instances.markPendingEntry(store, ref, foreignController.store.externalData.world.name,
+                    Role.participant())
+                Instances.teleportPlayerIn(playerRef, foreignController.store.externalData.world)
+                context.sendMessage(Message.raw("Returning you to your minigame…"))
             }
-            context.sendMessage(Message.raw(message))
             return
         }
 
+        // No instance in *this* world. An instance the definition pins to an
+        // asset runs in its own world, so a player standing in the lobby can
+        // only reach it by naming the asset — the worlds are not registered
+        // under the instance id, which is per-boot and per-world.
+        val asset = if (context.provided(assetArg)) context.get(assetArg) else null
+        if (asset != null) {
+            joinByAsset(context, store, ref, playerRef, world, asset)
+            return
+        }
+
+        val message = if (targetId != null) {
+            "Instance #$targetId does not exist or is not joinable right now (Waiting or Countdown)."
+        } else {
+            "No joinable instance right now (Waiting or Countdown)."
+        }
+        context.sendMessage(Message.raw(message))
+    }
+
+    /** Legacy path: controller and player share a store, so tag directly. */
+    private fun joinInWorld(
+        context: CommandContext,
+        store: Store<EntityStore>,
+        ref: Ref<EntityStore>,
+        playerRef: PlayerRef,
+        target: MinigameCommand.InstanceSnapshot,
+    ) {
         store.addComponent(ref, InMinigame.componentType, InMinigame(target.ref))
         store.addComponent(ref, Role.componentType, Role.participant())
-
         PlayerSet(store, target.ref).sendMessage(Message.raw("${playerRef.username} joined the minigame."))
+    }
+
+    /**
+     * Joins an instance that lives in its own world, selected by its definition's
+     * instance asset rather than by id: this is the lobby-side entry point.
+     *
+     * The membership cannot be applied here — the controller is in another store
+     * — so the player is tagged as *arriving* and teleported; the instance
+     * world's own `InstanceEntrySystem` finishes the join once they land.
+     */
+    private fun joinByAsset(
+        context: CommandContext,
+        store: Store<EntityStore>,
+        ref: Ref<EntityStore>,
+        playerRef: PlayerRef,
+        world: World,
+        asset: String,
+    ) {
+        val candidates = Instances.instanceWorlds().filter { Instances.assetNameOf(it) == asset }
+        if (candidates.isEmpty()) {
+            context.sendMessage(Message.raw("No running instance of '$asset' to join."))
+            return
+        }
+
+        // Pick the first instance that is actually accepting players; the scan
+        // has to run inside each candidate world (a foreign store cannot be read
+        // from here).
+        val chosen = candidates.firstOrNull { candidate ->
+            Instances.runOnWorld(candidate) {
+                val controller = Instances.findController(candidate) ?: return@runOnWorld false
+                MinigameCommand.snapshot(candidate.entityStore.store)
+                    .any { it.ref == controller && it.isJoinable }
+            }
+        }
+        if (chosen == null) {
+            context.sendMessage(Message.raw("Instance of '$asset' is not joinable right now (Waiting or Countdown)."))
+            return
+        }
+
+        // The sender's own state is captured here, in the lobby store, because it
+        // is unreadable once they leave: the uuid keys the roster, and the return
+        // world is where they are sent back to.
+        val uuid = playerRef.uuid
+        val lobbyName = world.name
+
+        // Reuse the player's existing slot/team when they already have one (a
+        // reconnect or a second join), so a roster is never duplicated.
+        val teamName = if (context.provided(teamArg)) context.get(teamArg) else null
+
+        InstanceRegistry.remember(uuid, lobbyName)
+        Instances.markPendingEntry(store, ref, chosen.name, Role.participant())
+
+        // The roster must be written BEFORE the transfer: joining is
+        // asynchronous, and the membership applied on arrival is derived from
+        // whoever the roster lists. A named team is created in the instance if
+        // it does not exist yet — the definition's teams are not enough, since a
+        // second team for the same instance may not be authored at all.
+        if (teamName != null) {
+            onInstanceWorldThread(chosen) {
+                val controller = Instances.findController(chosen) ?: return@onInstanceWorldThread
+                Instances.addTeamMember(chosen, controller, teamName, uuid)
+            }
+        }
+
+        Instances.teleportPlayerIn(playerRef, chosen)
+        context.sendMessage(Message.raw("Joining the $asset minigame…"))
+    }
+
+    /** Blocks until [body] has run on [world]'s thread (used for the pre-transfer roster write). */
+    private fun onInstanceWorldThread(world: World, body: () -> Unit) {
+        Instances.runOnWorld(world, body)
     }
 }
 
@@ -346,6 +594,15 @@ class LeaveCommand : AbstractPlayerCommand("leave", "minigame.commands.leave.des
         playerRef: PlayerRef,
         world: World
     ) {
+        // A member of an instance that runs in its own world: the roster and the
+        // controller are in another store, so this cannot go through the local
+        // Membership.leave path.
+        val foreignController = Instances.crossWorldControllerOf(store, ref)
+        if (foreignController != null) {
+            leaveCrossWorld(context, store, ref, playerRef, world, foreignController)
+            return
+        }
+
         val controllerRef = Membership.leave(store, ref, playerRef)
         if (controllerRef == null) {
             context.sendMessage(Message.raw("You are not in a minigame."))
@@ -355,6 +612,40 @@ class LeaveCommand : AbstractPlayerCommand("leave", "minigame.commands.leave.des
         if (controllerRef.isValid()) {
             PlayerSet(store, controllerRef).sendMessage(Message.raw("${playerRef.username} left the minigame."))
         }
+    }
+
+    /**
+     * `/minigame leave` for an instance world: drops the player's roster slot in
+     * the instance (on that world's thread), strips their local components, and
+     * sends them home.
+     *
+     * A voluntary leave also cancels any preserved membership, exactly like the
+     * in-world path.
+     */
+    private fun leaveCrossWorld(
+        context: CommandContext,
+        store: Store<EntityStore>,
+        ref: Ref<EntityStore>,
+        playerRef: PlayerRef,
+        world: World,
+        foreignController: Ref<EntityStore>,
+    ) {
+        val instanceWorld = foreignController.store.externalData.world
+        val role = store.getComponent(ref, Role.componentType)
+        val username = playerRef.username
+
+        Instances.runOnWorld(instanceWorld) {
+            val targetStore = instanceWorld.entityStore.store
+            // Only touch the roster if this entity is really in that store;
+            // otherwise the membership is already stale and there is nothing to
+            // release.
+            Membership.releaseIn(instanceWorld, foreignController, playerRef.uuid, username)
+        }
+
+        Instances.stripMembership(store, ref)
+        InstanceRegistry.forget(playerRef.uuid)
+        playerRef.sendMessage(Message.raw("You left the minigame."))
+        Instances.teleportPlayerOut(playerRef)
     }
 }
 

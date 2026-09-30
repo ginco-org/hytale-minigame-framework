@@ -16,9 +16,10 @@ import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamRef
+import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
+import gg.ginco.minigame.util.Instances
 import gg.ginco.minigame.util.PlayerSet
 import gg.ginco.minigame.util.Regions
-import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import java.util.function.BiConsumer
 
 /**
@@ -90,6 +91,16 @@ class PhaseSystem : TickingSystem<EntityStore>() {
         }
 
         for (ref in finished) {
+            // An instance that runs in its own world is torn down whole: the
+            // world, its controller, its children AND its players (who are sent
+            // back to their lobby). The in-world path below would leave the
+            // world running with nobody in it and players stranded inside.
+            val world = store.externalData.world
+            if (Instances.isInstanceWorld(world)) {
+                Instances.endInstance(world, ref)
+                continue
+            }
+
             val players = PlayerSet(store, ref).all()
             for (player in players) {
                 store.removeComponentIfExists(player, InMinigame.componentType)

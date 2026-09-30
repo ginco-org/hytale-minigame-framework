@@ -22,6 +22,12 @@ import gg.ginco.jellyparty.codec.annotations.SerializableObject
 data class MinigameDefinition(
     var gameTypeId: String = "",
     var displayName: String = "",
+    /**
+     * Name of the builtin instance asset (`Server/Instances/<name>`) this game
+     * type is played in. Empty means the legacy in-world mode: the instance
+     * lives in whatever world `/minigame create` was run from.
+     */
+    var instanceAsset: String = "",
     var teams: List<TeamDefinition> = emptyList(),
 )
 

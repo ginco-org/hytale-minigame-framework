@@ -63,6 +63,36 @@ Second vertical slice implemented:
     (the in-game editor write path) and `create <gametype>` then spawns new
     instances fully set-up from the definition
 
+## Instance worlds
+
+A definition may name an **instance asset** (`instanceAsset`), the name of a
+template world authored with the server's builtin `/instance edit new|save`.
+When it does, the minigame no longer runs in the lobby:
+
+- `create <gametype>` spawns (or reuses) the builtin instance world for that
+  asset — `InstancesPlugin.spawnInstance(asset, sourceWorld, transform)` at
+  the creating admin's position — and creates the controller and teams in
+  **that world's** store. The template world folder is **copied** per spawn,
+  so each game gets its own chunk store; every `create` therefore yields a
+  fresh world (`instance-<asset>-<hash>`).
+- `join [--asset=<name>] [--team=<name>]` moves the player in with
+  `teleportPlayerToInstance`, which returns a future; the player's entity is
+  rebuilt in the instance world's store.
+- `start`/`stop` take `--asset=<name>` to target the instance living in
+  another world, and `stop` inside an instance world ends that instance.
+- Ending an instance world (explicit `stop`, phase end, or the last player
+  leaving) tears the world down with `safeRemoveInstance`; players are sent
+  back to the world they joined from (`WorldReturnPoint`), not the lobby.
+
+Without an `instanceAsset` the old in-world behaviour is unchanged.
+
+Cross-world membership is restored by the instance's own roster, which is
+uuid-keyed and survives the entity rebuild: the instance world runs an
+`InstanceEntrySystem` that, on arrival, applies `InMinigame`/`Role`/`TeamRef`
+and writes the player into their team. The lobby store is never read from
+another world's thread (ECS refuses foreign-thread store access), so
+everything the destination needs travels in `PendingInstanceEntry`.
+
 ## Regions are data, not behaviour
 
 The framework DETECTS region boundary crossings and fires

@@ -6,6 +6,7 @@ import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceStats
 import gg.ginco.minigame.component.InstanceId
+import gg.ginco.minigame.component.PendingInstanceEntry
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.component.PreservedMembers
@@ -33,6 +34,7 @@ object Components {
         ControllerComponent.componentType = registry.registerComponent(ControllerComponent::class.java) { ControllerComponent() }
         InMinigame.componentType = registry.registerComponent(InMinigame::class.java) { InMinigame() }
         InstanceId.componentType = registry.registerComponent(InstanceId::class.java) { InstanceId() }
+        PendingInstanceEntry.componentType = registry.registerComponent(PendingInstanceEntry::class.java) { PendingInstanceEntry() }
         RegionPresence.componentType = registry.registerComponent(RegionPresence::class.java) { RegionPresence() }
         PreservedMembers.componentType = registry.registerComponent(PreservedMembers::class.java) { PreservedMembers() }
         InstanceStats.componentType = registry.registerComponent(InstanceStats::class.java) { InstanceStats() }

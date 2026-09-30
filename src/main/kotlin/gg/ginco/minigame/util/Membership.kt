@@ -52,21 +52,20 @@ object Membership {
             val store = ref.store
             val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
                 ?: return@preserveAndAnnounce
+            // A cross-world controller lives in another store: reading it from
+            // here throws ("Incorrect store for entity reference"), so the
+            // disconnect is deferred to that world's thread instead. Nothing is
+            // lost — the roster already holds this uuid.
+            if (controllerRef.store !== store) {
+                val instanceWorld = controllerRef.store.externalData.world
+                Instances.runOnWorld(instanceWorld) {
+                    preservePresence(instanceWorld.entityStore.store, controllerRef, playerRef)
+                }
+                return@preserveAndAnnounce
+            }
             if (!controllerRef.isValid()) return@preserveAndAnnounce
 
-            // Preserve the role for restoration on rejoin.
-            val role = store.getComponent(ref, Role.componentType)
-            val members = store.getComponent(controllerRef, PreservedMembers.componentType)?.members
-                ?: mutableListOf<PreservedMember>().also {
-                    store.addComponent(controllerRef, PreservedMembers.componentType, PreservedMembers(it))
-                }
-            if (members.none { it.uuid == playerRef.uuid }) {
-                members.add(PreservedMember(playerRef.uuid, playerRef.username,
-                    role?.kind?.name ?: Role.Kind.PARTICIPANT.name, role?.reason ?: ""))
-            }
-
-            Membership.announce(store, controllerRef,
-                Message.raw("${playerRef.username} disconnected."))
+            preservePresence(store, controllerRef, playerRef)
         }
 
         if (world.isInThread()) {
@@ -74,6 +73,52 @@ object Membership {
         } else {
             world.execute(::preserveAndAnnounce)
         }
+    }
+
+    /**
+     * Records [playerRef] as a preserved member of [controllerRef] and tells the
+     * connected members. Must run on the store's thread, with both refs from it.
+     */
+    private fun preservePresence(store: Store<EntityStore>, controllerRef: Ref<EntityStore>, playerRef: PlayerRef) {
+        if (!controllerRef.isValid()) return
+
+        // The role is read off the player's own entity, not the controller's.
+        val playerEntity = PlayerSet.findByUuid(store, playerRef.uuid)
+        val playerRole = playerEntity?.let { store.getComponent(it, Role.componentType) }
+
+        val members = store.getComponent(controllerRef, PreservedMembers.componentType)?.members
+            ?: mutableListOf<PreservedMember>().also {
+                store.addComponent(controllerRef, PreservedMembers.componentType, PreservedMembers(it))
+            }
+        if (members.none { it.uuid == playerRef.uuid }) {
+            members.add(PreservedMember(playerRef.uuid, playerRef.username,
+                playerRole?.kind?.name ?: Role.Kind.PARTICIPANT.name, playerRole?.reason ?: ""))
+        }
+
+        Membership.announce(store, controllerRef, Message.raw("${playerRef.username} disconnected."))
+    }
+
+    /**
+     * Releases one player from an instance that lives in another world: drops
+     * their roster slot and preserved record. Must run on the instance world's
+     * thread.
+     */
+    fun releaseIn(instanceWorld: com.hypixel.hytale.server.core.universe.world.World,
+                  controllerRef: Ref<EntityStore>, uuid: java.util.UUID, username: String) {
+        val store = instanceWorld.entityStore.store
+        if (!controllerRef.isValid()) return
+
+        val playerEntity = PlayerSet.findByUuid(store, uuid)
+        if (playerEntity != null) {
+            val teamRef = store.getComponent(playerEntity, TeamRef.componentType)?.teamRef
+            if (teamRef != null && teamRef.isValid()) {
+                store.getComponent(teamRef, TeamMembers.componentType)?.members?.remove(uuid)
+            }
+            store.removeComponentIfExists(playerEntity, TeamRef.componentType)
+        }
+        store.getComponent(controllerRef, PreservedMembers.componentType)
+            ?.members?.removeAll { it.uuid == uuid }
+        Membership.announce(store, controllerRef, Message.raw("$username left the minigame."))
     }
 
     /**
@@ -88,7 +133,9 @@ object Membership {
     private data class Candidate(val controllerRef: Ref<EntityStore>, val entry: PreservedMember, val preservedList: MutableList<PreservedMember>)
 
     fun restoreIfPreserved(store: Store<EntityStore>, ref: Ref<EntityStore>, playerRef: PlayerRef): Boolean {
-        // Already in a game (any game): nothing to restore.
+        // Already in a game: nothing to restore. A *cross-world* link also means
+        // the controller lives in another store, where this store's refs are
+        // unreadable — the join-abroad path handles that trip instead.
         if (store.getComponent(ref, InMinigame.componentType) != null) return false
 
         // Scan first: collect candidates (writes are illegal while the

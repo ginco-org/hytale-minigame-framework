@@ -5,6 +5,7 @@ import com.hypixel.hytale.server.core.plugin.JavaPluginInit
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent
 import gg.ginco.minigame.command.MinigameCommand
 import gg.ginco.minigame.definition.DefinitionStore
+import gg.ginco.minigame.system.InstanceEntrySystem
 import gg.ginco.minigame.system.PhaseSystem
 import gg.ginco.minigame.system.RegionSystem
 import gg.ginco.minigame.util.Membership
@@ -17,6 +18,9 @@ class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
         Components.register(entityStoreRegistry)
         entityStoreRegistry.registerSystem(PhaseSystem())
         entityStoreRegistry.registerSystem(RegionSystem())
+        // Runs in every world; only acts inside instance worlds, where it
+        // finishes a /minigame join whose transfer crossed a world boundary.
+        entityStoreRegistry.registerSystem(InstanceEntrySystem())
         Regions.register(chunkStoreRegistry)
         // Registered in setup() like the server's own lifecycle listeners —
         // start()-time registration does not feed the bus's hasListener()

@@ -85,14 +85,26 @@ object DefinitionStore {
         Files.writeString(file, encode(definition))
     }
 
+    /** Drops [gameTypeId] from the cache and from disk. Returns true when a file was deleted. */
+    fun remove(gameTypeId: String): Boolean {
+        synchronized(definitions) { definitions.remove(gameTypeId) }
+        return Files.deleteIfExists(dir.resolve(gameTypeId + ".json"))
+    }
+
     /**
      * Captures a live instance's teams into a [MinigameDefinition] and
      * persists it (the editor save path). Regions are NOT captured: they are
      * world content (chunk-store resource) and persist with the world.
      */
     fun saveFromInstance(store: Store<EntityStore>, controllerRef: Ref<EntityStore>, gameTypeId: String): MinigameDefinition {
+        // The editor captures teams only; the instance asset and display name
+        // belong to the definition already on disk and would otherwise be
+        // wiped by every save.
+        val existing = get(gameTypeId)
         val def = MinigameDefinition(
             gameTypeId = gameTypeId,
+            displayName = existing?.displayName ?: "",
+            instanceAsset = existing?.instanceAsset ?: "",
             teams = Teams.of(store, controllerRef).map {
                 TeamDefinition(
                     name = it.data.name,
