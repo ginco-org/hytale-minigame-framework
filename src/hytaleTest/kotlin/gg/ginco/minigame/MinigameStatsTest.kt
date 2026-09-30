@@ -172,4 +172,64 @@ class MinigameStatsTest {
         }
         t.succeed()
     }
+
+    /** Lifetime ledger: recorded at cleanup, merged across instances. */
+    @HytaleTest(timeoutSeconds = 60)
+    fun lifetimeStatsRecordAndMerge(t: HytaleTestHelper) {
+        val alice = player(t)
+        createInstance(t, alice, "arena")
+        alice.runCommand("minigame join").join()
+
+        val world = t.world
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
+            Stats.add(store, controller, "goals", 2)
+            Stats.addForPlayer(store, controller, alice.ref(), "goals", 1)
+        }
+
+        alice.runCommand("minigame stop").join()
+        // ENDING grace (3s) runs before cleanup records the ledger.
+        t.assertEventually {
+            t.runOnWorld {
+                val store = MinigameTestHarness.storeOf(world)
+                t.assertTrue(MinigameTestHarness.controllers(store).isEmpty(), "instance should be gone")
+            }
+        }
+
+        val ledger = gg.ginco.minigame.stats.LifetimeStats.load("arena")
+        t.assertEquals(2, ledger.counters["goals"], "lifetime instance counter should accumulate")
+        val playerEntry = ledger.players.singleOrNull { it.uuid == alice.uuid.toString() }
+        t.assertNotNull(playerEntry, "player entry should exist")
+        t.assertEquals(1, playerEntry?.counters?.get("goals"), "player lifetime counter should accumulate")
+        t.succeed()
+    }
+
+    /** A second instance of the same game type MERGES into the ledger (adds, not replaces). */
+    @HytaleTest(timeoutSeconds = 60)
+    fun lifetimeStatsMergeAcrossInstances(t: HytaleTestHelper) {
+        val alice = player(t)
+        // Instance #1: 2 goals lifetime so far (from the earlier test's file or fresh).
+        val before = gg.ginco.minigame.stats.LifetimeStats.load("arena").counters["goals"] ?: 0
+
+        createInstance(t, alice, "arena")
+        alice.runCommand("minigame join").join()
+        val world = t.world
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
+            Stats.add(store, controller, "goals", 3)
+        }
+        alice.runCommand("minigame stop").join()
+        t.assertEventually {
+            t.runOnWorld {
+                val store = MinigameTestHarness.storeOf(world)
+                t.assertTrue(MinigameTestHarness.controllers(store).isEmpty(), "instance should be gone")
+            }
+        }
+
+        t.assertEquals(before + 3, gg.ginco.minigame.stats.LifetimeStats.load("arena").counters["goals"],
+            "the second instance's goals must ADD to the ledger")
+        t.succeed()
+    }
 }

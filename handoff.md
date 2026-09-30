@@ -167,4 +167,10 @@ ever be stored. Redesigned as single concrete classes.
     per-player-by-uuid counters, released with the instance, runtime-only —
     no disk persistence yet). Stat ids are consumer vocabulary. The
     /minigame stats command is a read-only view.
+22. Lifetime stats: recorded at instance cleanup (PhaseSystem finished-path,
+    before controller release), merged additively into
+    `<dataDir>/stats/<gameTypeId>.json` (atomic temp+move). Schema uses
+    hytale-codec @SerializableObject with `MapCodec(Codec.INTEGER) { HashMap() }`
+    for counter maps via @SerialWithCodec. Server-crash mid-game loses that
+    game's stats (record only happens at cleanup) — acceptable v1 tradeoff.
 

@@ -134,6 +134,11 @@ arbitrary consumer-chosen stat ids, scoped to an instance, per-player
 counters uuid-keyed (they survive disconnects via preserved membership),
 released with the instance. `/minigame stats [--game=<id>]` prints totals
 and per-player breakdowns by name.
+
+Lifetime stats: when an instance's game ends, its counters and per-player
+counters merge additively into a per-game-type ledger
+(`<dataDir>/stats/<gameTypeId>.json`) — read it via
+`LifetimeStats.load(gameTypeId)`. Atomic writes; merge is additive.
 - Integration tests: 52 `@HytaleTest` methods run inside a real server
   via [hytest](https://github.com/ginco-org/hytest) (`./gradlew hytaleTest`);
   hytest loads the real plugin from the merged test jar (SubPlugins manifest),

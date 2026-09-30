@@ -35,7 +35,9 @@ class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
     override fun start() {
         commandRegistry.registerCommand(MinigameCommand())
         val loaded = DefinitionStore.init(dataDirectory)
-        logger.at(Level.INFO).log("MinigameFramework started — $loaded minigame definition(s) loaded")
+        gg.ginco.minigame.stats.LifetimeStats.init(dataDirectory)
+        logger.at(Level.INFO).log(
+            "MinigameFramework started — $loaded minigame definition(s) loaded")
     }
 
     override fun shutdown() {
