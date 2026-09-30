@@ -72,11 +72,6 @@ class RegionSystem : TickingSystem<EntityStore>() {
 
             val entered = current.filter { it.id !in player.inside }
             val exited = player.inside.filter { id -> current.none { it.id == id } }
-            if (entered.isNotEmpty() || exited.isNotEmpty() || System.getProperty("hytest.regionTraceAll") == "true" ||
-                (player.inside.isNotEmpty() || current.isNotEmpty())) {
-                println("[RegionTrace] player=${player.player.username} inside=${player.inside} " +
-                    "current=${current.map { it.id }} entered=${entered.map { it.id }} exited=${exited}")
-            }
 
             for (marker in entered) {
                 dispatch(PlayerEnterRegionEvent(player.player, player.entity, marker.id, marker.type))

@@ -40,24 +40,46 @@ object LifetimeStats {
     /**
      * Merges the live [InstanceStats] of [controllerRef] into the lifetime
      * ledger for its game type and persists the file.
+     *
+     * Runs on the caller's (world) thread: the read/merge is in-memory, and
+     * the write is a small atomic temp+move — matching the sync-write pattern
+     * of [gg.ginco.minigame.definition.DefinitionStore.save]. An async write
+     * would race the test/game reading the ledger right after cleanup.
      */
     fun record(store: Store<EntityStore>, controllerRef: Ref<EntityStore>) {
         val gameTypeId = store.getComponent(controllerRef, ControllerComponent.componentType)?.gameTypeId
             ?: return
         val stats = store.getComponent(controllerRef, InstanceStats.componentType) ?: return
+
+        // Build the merged ledger in FRESH local structures — never mutate the
+        // decoded file state (decoded maps may be immutable, and any throw on
+        // the world thread kills the tick thread).
+        val countersOut = LinkedHashMap<String, Int>()
+        for ((stat, value) in load(gameTypeId).counters) {
+            countersOut[stat] = (countersOut[stat] ?: 0) + value
+        }
+        val playersOut = LinkedHashMap<String, MutableMap<String, Int>>()
+        for ((stat, value) in stats.counters) {
+            countersOut[stat] = (countersOut[stat] ?: 0) + value
+        }
+        for ((uuid, counters) in stats.perPlayer) {
+            val target = playersOut.getOrPut(uuid.toString()) { mutableMapOf() }
+            for ((stat, value) in counters) {
+                target[stat] = (target[stat] ?: 0) + value
+            }
+        }
+
         synchronized(fileFor(gameTypeId).toAbsolutePath()) {
-            val ledger = load(gameTypeId)
-            for ((stat, value) in stats.counters) {
-                ledger.counters[stat] = (ledger.counters[stat] ?: 0) + value
-            }
-            for ((uuid, counters) in stats.perPlayer) {
-                val entry = ledger.players.firstOrNull { it.uuid == uuid.toString() }
-                    ?: LifetimePlayerEntry(uuid.toString()).also { ledger.players.add(it) }
-                for ((stat, value) in counters) {
-                    entry.counters[stat] = (entry.counters[stat] ?: 0) + value
-                }
-            }
-            write(gameTypeId, ledger)
+            write(
+                gameTypeId,
+                LifetimeStatsFile(
+                    gameTypeId = gameTypeId,
+                    counters = countersOut,
+                    players = playersOut.map { (uuid, counters) ->
+                        LifetimePlayerEntry(uuid, counters)
+                    }.toMutableList(),
+                ),
+            )
         }
     }
 
@@ -70,7 +92,14 @@ object LifetimeStats {
                 com.hypixel.hytale.codec.util.RawJsonReader(Files.readString(file).toCharArray()),
                 com.hypixel.hytale.codec.ExtraInfo(),
             ) ?: LifetimeStatsFile(gameTypeId = gameTypeId)
-            decoded.copy(gameTypeId = gameTypeId)
+            // Normalize to mutable: the codec's decode path may hand back
+            // unmodifiable maps, and record() merges additively in place.
+            decoded.copy(
+                counters = decoded.counters.toMutableMap(),
+                players = decoded.players
+                    .map { it.copy(counters = it.counters.toMutableMap()) }
+                    .toMutableList(),
+            )
         } catch (e: Exception) {
             System.err.println("[MinigameFramework] failed to load lifetime stats ${file.fileName}: ${e.message}")
             LifetimeStatsFile(gameTypeId = gameTypeId)

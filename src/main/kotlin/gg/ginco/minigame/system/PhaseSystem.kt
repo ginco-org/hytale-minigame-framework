@@ -91,6 +91,9 @@ class PhaseSystem : TickingSystem<EntityStore>() {
         }
 
         for (ref in finished) {
+            // A throwing cleanup must never kill the world's ticking thread:
+            // isolate each instance's teardown and surface the failure.
+            try {
             // Persist the finished game's counters into the lifetime ledger
             // before the controller (and its stats) is released.
             gg.ginco.minigame.stats.LifetimeStats.record(store, ref)
@@ -128,6 +131,12 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                 store.removeEntity(child, RemoveReason.REMOVE)
             }
             store.removeEntity(ref, RemoveReason.REMOVE)
+            } catch (e: Exception) {
+                // A throwing cleanup must never kill the world's ticking
+                // thread — that would strand every later world interaction
+                // with "thread not accepting tasks" and cascade across tests.
+                println("[MinigameFramework] instance cleanup failed for $ref: $e")
+            }
         }
     }
 
