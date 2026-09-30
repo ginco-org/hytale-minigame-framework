@@ -97,6 +97,8 @@ class PhaseSystem : TickingSystem<EntityStore>() {
             // Persist the finished game's counters into the lifetime ledger
             // before the controller (and its stats) is released.
             gg.ginco.minigame.stats.LifetimeStats.record(store, ref)
+            val cleanupWorld = store.externalData.world
+            gg.ginco.minigame.behavior.GameBehaviors.deactivateFor(cleanupWorld, ref)
             // An instance that runs in its own world is torn down whole: the
             // world, its controller, its children AND its players (who are sent
             // back to their lobby). The in-world path below would leave the

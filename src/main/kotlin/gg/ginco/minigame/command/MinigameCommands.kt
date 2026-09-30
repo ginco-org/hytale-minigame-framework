@@ -196,6 +196,9 @@ class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.d
         // content — they already exist in the world.)
         if (definition != null) {
             DefinitionStore.spawnInto(store, ref, definition)
+            if (definition.behaviors.isNotEmpty()) {
+                gg.ginco.minigame.behavior.GameBehaviors.activate(world, store, ref, gameTypeId, definition.behaviors)
+            }
             context.sendMessage(
                 Message.raw("Created instance #${id.value} from definition '${definition.gameTypeId}' " +
                     "(${definition.teams.size} team(s))."))

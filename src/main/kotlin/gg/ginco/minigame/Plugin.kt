@@ -36,6 +36,7 @@ class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
         commandRegistry.registerCommand(MinigameCommand())
         val loaded = DefinitionStore.init(dataDirectory)
         gg.ginco.minigame.stats.LifetimeStats.init(dataDirectory)
+        gg.ginco.minigame.behavior.GameBehaviors.init(eventRegistry)
         logger.at(Level.INFO).log(
             "MinigameFramework started — $loaded minigame definition(s) loaded")
     }

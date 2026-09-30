@@ -173,4 +173,13 @@ ever be stored. Redesigned as single concrete classes.
     hytale-codec @SerializableObject with `MapCodec(Codec.INTEGER) { HashMap() }`
     for counter maps via @SerialWithCodec. Server-crash mid-game loses that
     game's stats (record only happens at cleanup) — acceptable v1 tradeoff.
+23. Behaviors pillar: `GameBehaviors.register(id) { ctx -> ... }` (consumer
+    registration), definition `behaviors` list (activation per game type),
+    `BehaviorHost` per instance (context + behavior lifecycle), strict
+    deactivation at instance end. The context (MinigameContext) exposes
+    world/store/controller/players/regions/stats/onEvent/runOnWorld/
+    runLater. Region crossings fire when the player is inside at placement
+    — register listeners BEFORE placing regions.
+24. Trigger dispatch is asynchronous relative to test steps: assert polled
+    state with assertEventually, never synchronously (see #5).
 

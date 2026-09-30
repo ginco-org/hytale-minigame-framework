@@ -29,6 +29,7 @@ data class MinigameDefinition(
      */
     var instanceAsset: String = "",
     var teams: List<TeamDefinition> = emptyList(),
+    var behaviors: List<String> = emptyList(),
 )
 
 @SerializableObject
