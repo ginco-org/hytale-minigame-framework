@@ -11,29 +11,27 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
  * The framework only DETECTS and REPORTS region transitions — it attaches no
  * behaviour to them. What an entry means (score a point, eliminate the player,
  * teleport them home, open a door) is decided by the consuming plugin in its
- * listener. Events fire in every instance phase; gate on
- * [instanceRef]'s `Phase` yourself if your rule is play-only.
+ * listener. Events fire in every instance phase; gate on the player's
+ * instance `Phase` yourself if your rule is play-only.
  *
  * Listeners run synchronously on the world thread during the region system's
  * tick: mutating store/entity state is allowed, blocking is not.
  *
  * @param player       the player that crossed the boundary
  * @param playerEntity the player's entity ref in the world store
- * @param instance     the minigame instance (controller entity) owning the region
- * @param marker       the marker entity crossed (carries its `Bounds` + type id)
+ * @param regionId     the id of the region marker crossed
  * @param type         the marker's type id — arbitrary, plugin-chosen data;
  *   consumers decide what a crossing of their own types means
  */
 class PlayerEnterRegionEvent(
     val player: PlayerRef,
     val playerEntity: Ref<EntityStore>,
-    val instance: Ref<EntityStore>,
-    val marker: Ref<EntityStore>,
+    val regionId: String,
     val type: String,
 ) : IEvent<Void> {
 
     override fun toString(): String =
-        "PlayerEnterRegionEvent(player=${player.username}, instance=$instance, marker=$marker, type='$type')"
+        "PlayerEnterRegionEvent(player=${player.username}, region=$regionId, type='$type')"
 }
 
 /**
@@ -44,11 +42,10 @@ class PlayerEnterRegionEvent(
 class PlayerExitRegionEvent(
     val player: PlayerRef,
     val playerEntity: Ref<EntityStore>,
-    val instance: Ref<EntityStore>,
-    val marker: Ref<EntityStore>,
+    val regionId: String,
     val type: String,
 ) : IEvent<Void> {
 
     override fun toString(): String =
-        "PlayerExitRegionEvent(player=${player.username}, instance=$instance, marker=$marker, type='$type')"
+        "PlayerExitRegionEvent(player=${player.username}, region=$regionId, type='$type')"
 }

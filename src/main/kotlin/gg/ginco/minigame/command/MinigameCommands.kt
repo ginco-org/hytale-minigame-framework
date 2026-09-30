@@ -173,13 +173,14 @@ class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.d
         }
 
         // A definition turns the bare instance into a fully set-up one:
-        // every team and marker the game type describes, spawned in.
+        // every team the game type describes, spawned in. (Regions are world
+        // content — they already exist in the world.)
         val definition = DefinitionStore.get(gameTypeId)
         if (definition != null) {
             DefinitionStore.spawnInto(store, ref, definition)
             context.sendMessage(
                 Message.raw("Created instance #${id.value} from definition '${definition.gameTypeId}' " +
-                    "(${definition.teams.size} team(s), ${definition.markers.size} marker(s))."))
+                    "(${definition.teams.size} team(s))."))
         } else {
             context.sendMessage(Message.raw("Created instance #${id.value} (gameType=$gameTypeId, phase=Waiting)."))
         }

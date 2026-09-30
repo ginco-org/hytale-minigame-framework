@@ -6,7 +6,6 @@ import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.TeamData
-import gg.ginco.minigame.util.Regions
 import gg.ginco.minigame.util.Teams
 import java.nio.file.Files
 import java.nio.file.Path
@@ -87,8 +86,9 @@ object DefinitionStore {
     }
 
     /**
-     * Captures a live instance's teams and markers into a
-     * [MinigameDefinition] and persists it (the editor save path).
+     * Captures a live instance's teams into a [MinigameDefinition] and
+     * persists it (the editor save path). Regions are NOT captured: they are
+     * world content (chunk-store resource) and persist with the world.
      */
     fun saveFromInstance(store: Store<EntityStore>, controllerRef: Ref<EntityStore>, gameTypeId: String): MinigameDefinition {
         val def = MinigameDefinition(
@@ -100,13 +100,6 @@ object DefinitionStore {
                     maxPlayers = it.data.maxPlayers,
                 )
             },
-            markers = Regions.markersOf(store, controllerRef).map {
-                MarkerDefinition(
-                    type = it.type,
-                    minX = it.bounds.min.x, minY = it.bounds.min.y, minZ = it.bounds.min.z,
-                    maxX = it.bounds.max.x, maxY = it.bounds.max.y, maxZ = it.bounds.max.z,
-                )
-            },
         )
         save(def)
         return def
@@ -114,19 +107,13 @@ object DefinitionStore {
 
     /**
      * Spawns everything a definition describes onto a freshly created
-     * instance: teams (with their rosters) and region markers. Returns the
-     * number of entities created.
+     * instance: its teams. (Regions are world content — they already exist
+     * in the world and need no spawning.)
      */
     fun spawnInto(store: Store<EntityStore>, controllerRef: Ref<EntityStore>, definition: MinigameDefinition): Int {
         var created = 0
         for (team in definition.teams) {
             if (Teams.createTeam(store, controllerRef, TeamData(team.name, team.color, 0, team.maxPlayers)) != null) created++
-        }
-        for (marker in definition.markers) {
-            val markerRef = Regions.createMarkerWithBounds(store, controllerRef, marker.type,
-                org.joml.Vector3d(marker.minX, marker.minY, marker.minZ),
-                org.joml.Vector3d(marker.maxX, marker.maxY, marker.maxZ))
-            if (markerRef != null) created++
         }
         return created
     }

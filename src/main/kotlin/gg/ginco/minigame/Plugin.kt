@@ -8,6 +8,7 @@ import gg.ginco.minigame.definition.DefinitionStore
 import gg.ginco.minigame.system.PhaseSystem
 import gg.ginco.minigame.system.RegionSystem
 import gg.ginco.minigame.util.Membership
+import gg.ginco.minigame.util.Regions
 import java.util.logging.Level
 
 class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
@@ -16,6 +17,7 @@ class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
         Components.register(entityStoreRegistry)
         entityStoreRegistry.registerSystem(PhaseSystem())
         entityStoreRegistry.registerSystem(RegionSystem())
+        Regions.register(chunkStoreRegistry)
         // Registered in setup() like the server's own lifecycle listeners —
         // start()-time registration does not feed the bus's hasListener()
         // gate, and the disconnect event is silently skipped when no listener

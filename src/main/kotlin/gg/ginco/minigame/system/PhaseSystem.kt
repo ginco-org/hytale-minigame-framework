@@ -124,7 +124,8 @@ class PhaseSystem : TickingSystem<EntityStore>() {
      * world thread, so direct [TransformComponent] mutation is legal.
      */
     private fun teleportPlayersToSpawnPoints(store: Store<EntityStore>, controllerRef: Ref<EntityStore>) {
-        val spawns = Regions.markersOf(store, controllerRef, Regions.SPAWN_TYPE)
+        val world = store.externalData.world
+        val spawns = Regions.markersOf(world, Regions.SPAWN_TYPE)
         if (spawns.isEmpty()) return
 
         val players = PlayerSet(store, controllerRef).all()

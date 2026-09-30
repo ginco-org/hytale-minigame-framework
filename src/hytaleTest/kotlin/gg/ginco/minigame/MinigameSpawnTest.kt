@@ -37,8 +37,7 @@ class MinigameSpawnTest {
 
     private fun spawnPointCount(t: HytaleTestHelper): Int =
         t.runOnWorldReturning {
-            val store = MinigameTestHarness.storeOf(t.world)
-            MinigameTestHarness.controllers(store).sumOf { gg.ginco.minigame.util.Regions.markersOf(store, it, gg.ginco.minigame.util.Regions.SPAWN_TYPE).size }
+            gg.ginco.minigame.util.Regions.markersOf(t.world, gg.ginco.minigame.util.Regions.SPAWN_TYPE).size
         }
 
     private fun near(actual: Vector3d, expected: Vector3d, tolerance: Double): Boolean {
@@ -50,20 +49,20 @@ class MinigameSpawnTest {
     @HytaleTest(timeoutSeconds = 60)
     fun regionSpawnCreatesMarkerAtPlayerPosition(t: HytaleTestHelper) {
         val alice = player(t)
-        val instanceId = createInstance(t, alice, "arena")
+        createInstance(t, alice, "arena")
         alice.teleport(60.0, 64.0, 80.0).join()
         alice.runCommand("minigame region add spawn").join()
 
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(t.world)
             val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
-            val spawns = gg.ginco.minigame.util.Regions.markersOf(store, controller, gg.ginco.minigame.util.Regions.SPAWN_TYPE)
+            val spawns = gg.ginco.minigame.util.Regions.markersOf(t.world, gg.ginco.minigame.util.Regions.SPAWN_TYPE)
             t.assertEquals(1, spawns.size, "exactly one marker should exist")
-            val center = spawns.single().bounds.center()
+            val center = spawns.single().center()
             t.assertTrue(near(center, Vector3d(60.0, 64.0, 80.0), 0.5),
                 "marker centre should be the admin position, got $center")
         }
-        t.assertTrue(alice.sawMessage("Created spawn marker #1 for instance #$instanceId at (60.0, 64.0, 80.0)."),
+        t.assertTrue(alice.sawMessage(" at (60.0, 64.0, 80.0)."),
             "create should confirm position, got: ${alice.receivedMessages()}")
         t.succeed()
     }
@@ -141,27 +140,28 @@ class MinigameSpawnTest {
 
         alice.runCommand("minigame region clear").join()
         t.assertEquals(0, spawnPointCount(t), "clear should remove all markers")
-        t.assertTrue(alice.sawMessage("Removed 2 marker(s) from instance"),
+        t.assertTrue(alice.sawMessage("Removed 2 marker(s)."),
             "clear should report the count, got: ${alice.receivedMessages()}")
         t.succeed()
     }
 
-    /** Markers are non-player child entities: instance cleanup removes them. */
+    /** Regions are world content: they SURVIVE the end of an instance. */
     @HytaleTest(timeoutSeconds = 60)
-    fun instanceCleanupRemovesMarkers(t: HytaleTestHelper) {
+    fun markersPersistAfterInstanceEnd(t: HytaleTestHelper) {
         val alice = player(t)
         createInstance(t, alice, "arena")
         alice.runCommand("minigame region add spawn").join()
         t.assertEquals(1, spawnPointCount(t), "marker should exist before stop")
 
         alice.runCommand("minigame stop").join()
-        // NOTE: succeedWhen is asynchronous — code after it runs immediately,
-        // so all post-cleanup assertions belong INSIDE the polled block.
+        // NOTE: succeedWhen is asynchronous — post-state assertions belong
+        // INSIDE the polled block.
         t.succeedWhen {
             t.runOnWorld {
                 val store = MinigameTestHarness.storeOf(t.world)
                 t.assertTrue(MinigameTestHarness.controllers(store).isEmpty(), "instance should be gone")
-                t.assertEquals(0, spawnPointCount(t), "markers must be removed with their instance")
+                t.assertEquals(1, spawnPointCount(t),
+                    "markers are world content — they must survive the instance")
             }
         }
         t.succeed()

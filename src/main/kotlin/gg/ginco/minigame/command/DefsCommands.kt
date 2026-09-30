@@ -9,7 +9,6 @@ import com.hypixel.hytale.server.core.command.system.basecommands.AbstractWorldC
 import com.hypixel.hytale.server.core.universe.world.World
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.definition.DefinitionStore
-import gg.ginco.minigame.util.Regions
 
 /**
  * `/minigame defs` — durable definition management (the editor save path).
@@ -36,7 +35,7 @@ class DefsListCommand : AbstractWorldCommand("list", "minigame.commands.defs.lis
             if (defs.isEmpty()) Message.raw("No minigame definitions loaded. Save one with /minigame defs save.")
             else Message.raw(
                 defs.joinToString(prefix = "${defs.size} definition(s): ") {
-                    "${it.gameTypeId} (${it.teams.size} team(s), ${it.markers.size} marker(s))"
+                    "${it.gameTypeId} (${it.teams.size} team(s))"
                 }
             )
         )
@@ -78,16 +77,8 @@ class DefsSaveCommand : AbstractWorldCommand("save", "minigame.commands.defs.sav
         context.sendMessage(
             Message.raw(
                 "Saved definition '${definition.gameTypeId}' " +
-                    "(${definition.teams.size} team(s), ${definition.markers.size} marker(s))."
+                    "(${definition.teams.size} team(s))."
             )
         )
-        // Saved markers are stored with exact bounds; surface the region
-        // query result so users see what was captured.
-        val markers = Regions.markersOf(store, target.ref)
-        if (markers.isNotEmpty()) {
-            context.sendMessage(
-                Message.raw("Markers captured: " + markers.joinToString { "${it.type} at ${RegionCommand.format(it.bounds.center())}" })
-            )
-        }
     }
 }

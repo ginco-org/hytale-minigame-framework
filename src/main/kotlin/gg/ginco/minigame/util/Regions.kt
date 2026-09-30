@@ -1,106 +1,90 @@
 package gg.ginco.minigame.util
 
-import com.hypixel.hytale.component.AddReason
-import com.hypixel.hytale.component.Archetype
-import com.hypixel.hytale.component.ArchetypeChunk
-import com.hypixel.hytale.component.CommandBuffer
-import com.hypixel.hytale.component.Component
-import com.hypixel.hytale.component.Ref
-import com.hypixel.hytale.component.Store
-import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
-import gg.ginco.minigame.component.Bounds
-import gg.ginco.minigame.component.InMinigame
-import gg.ginco.minigame.component.RegionMarker
+import com.hypixel.hytale.component.ComponentRegistryProxy
+import com.hypixel.hytale.component.ResourceType
+import com.hypixel.hytale.server.core.universe.world.World
+import com.hypixel.hytale.server.core.universe.world.storage.ChunkStore
+import gg.ginco.minigame.region.RegionData
+import gg.ginco.minigame.region.RegionResource
+import gg.ginco.minigame.region.RegionResourceCodec
 import org.joml.Vector3d
-import java.util.function.BiConsumer
-
-/** Immutable snapshot of one region marker. */
-data class MarkerSnapshot(
-    val ref: Ref<EntityStore>,
-    val type: String,
-    val bounds: Bounds,
-) {
-    fun contains(position: Vector3d): Boolean = bounds.contains(position)
-    fun center(): Vector3d = bounds.center()
-}
 
 /**
- * Lookup helpers for the region markers of one minigame instance — the
- * query surface consuming plugins build their game rules on.
+ * The region marker surface: world-persisted regions in the instance world's
+ * chunk store.
  *
- * A region marker is an entity with `Bounds` + `InMinigame` -> its instance
- * + a [RegionMarker] carrying its **type id**. Type ids are arbitrary,
- * plugin-chosen strings ("goal", "capture-point-a", "lasertag-base", ...);
- * the framework fixes no vocabulary. Crossings are reported as events
- * ([gg.ginco.minigame.event.PlayerEnterRegionEvent] carries the type);
- * meaning is attached by consumers.
- *
- * One reserved id: [SPAWN_TYPE] markers are the teleport targets used when
- * an instance starts.
+ * One reserved type id: [SPAWN_TYPE] markers are the teleport targets used
+ * when an instance starts. Everything else is consumer vocabulary.
  */
 object Regions {
-
-    /** Reserved marker type the framework itself consumes (start-of-game teleports). */
     const val SPAWN_TYPE = "spawn"
 
-    /** Every marker of [controllerRef]'s instance (optionally filtered by [type]), in creation order. */
-    fun markersOf(store: Store<EntityStore>, controllerRef: Ref<EntityStore>, type: String? = null): List<MarkerSnapshot> {
+    private lateinit var resourceType: ResourceType<ChunkStore, RegionResource>
+
+    /** Registers the world-persisted region resource. Called from plugin setup. */
+    fun register(chunkStoreRegistry: ComponentRegistryProxy<ChunkStore>) {
+        resourceType = chunkStoreRegistry.registerResource(
+            RegionResource::class.java,
+            "MinigameRegions",
+            RegionResourceCodec,
+        )
+    }
+
+    private fun resourceOf(world: World): RegionResource =
+        world.chunkStore.store.getResource(resourceType)
+
+    /** Immutable view of one region marker. */
+    data class MarkerSnapshot(
+        val id: String,
+        val type: String,
+        val minX: Double, val minY: Double, val minZ: Double,
+        val maxX: Double, val maxY: Double, val maxZ: Double,
+    ) {
+        fun contains(position: Vector3d): Boolean =
+            position.x >= minX && position.x <= maxX &&
+                position.y >= minY && position.y <= maxY &&
+                position.z >= minZ && position.z <= maxZ
+
+        fun center(): Vector3d = Vector3d(
+            (minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
+    }
+
+    /** Every region marker in [world] (optionally of [type]), sorted by id. */
+    fun markersOf(world: World, type: String? = null): List<MarkerSnapshot> {
         val out = mutableListOf<MarkerSnapshot>()
-        val consumer = BiConsumer<ArchetypeChunk<EntityStore>, CommandBuffer<EntityStore>> { chunk, _ ->
-            for (i in 0 until chunk.size()) {
-                val bounds = chunk.getComponent(i, Bounds.componentType) ?: continue
-                val marker = chunk.getComponent(i, RegionMarker.componentType) ?: continue
-                val inMinigame = chunk.getComponent(i, InMinigame.componentType) ?: continue
-                if (inMinigame.controllerRef != controllerRef) continue
-                if (type != null && marker.type != type) continue
-                out.add(MarkerSnapshot(chunk.getReferenceTo(i), marker.type, bounds))
+        for (r in resourceOf(world).regions) {
+            if (type == null || r.type == type) {
+                out.add(MarkerSnapshot(r.id, r.type, r.minX, r.minY, r.minZ, r.maxX, r.maxY, r.maxZ))
             }
         }
-        store.forEachChunk(Archetype.of(Bounds.componentType), consumer)
-        return out
+        return out.sortedBy { it.id }
     }
 
     /** The first marker of [type] containing [position], or null. */
-    fun markerAt(store: Store<EntityStore>, controllerRef: Ref<EntityStore>, type: String, position: Vector3d): MarkerSnapshot? =
-        markersOf(store, controllerRef, type).firstOrNull { it.contains(position) }
-
-    /** The type id of the marker entity [marker], or null when it is not a marker. */
-    fun typeOf(store: Store<EntityStore>, marker: Ref<EntityStore>): String? =
-        store.getComponent(marker, RegionMarker.componentType)?.type
+    fun markerAt(world: World, type: String, position: Vector3d): MarkerSnapshot? =
+        markersOf(world, type).firstOrNull { it.contains(position) }
 
     /**
-     * Creates a marker entity of [type] with explicit bounds, linked to
-     * [controllerRef]. Returns the marker ref, or null when the store
-     * rejected the entity. (Holder arrays are slot-indexed — see
-     * MinigameCommands.CreateCommand.)
+     * Adds a marker of [type] with explicit bounds. Returns its generated id
+     * (unique per world; adding an existing id replaces that marker).
      */
-    fun createMarkerWithBounds(
-        store: Store<EntityStore>,
-        controllerRef: Ref<EntityStore>,
-        type: String,
-        min: Vector3d,
-        max: Vector3d,
-    ): Ref<EntityStore>? {
-        val archetype = Archetype.of(Bounds.componentType, InMinigame.componentType, RegionMarker.componentType)
-        @Suppress("UNCHECKED_CAST")
-        val components = arrayOfNulls<Component<EntityStore>>(archetype.length())
-        components[Bounds.componentType.index] = Bounds(Vector3d(min), Vector3d(max))
-        components[InMinigame.componentType.index] = InMinigame(controllerRef)
-        components[RegionMarker.componentType.index] = RegionMarker(type)
-        val holder = store.registry.newHolder(archetype, components as Array<Component<EntityStore>>)
-        return store.addEntity(holder, AddReason.SPAWN)
+    fun addMarker(world: World, type: String, minX: Double, minY: Double, minZ: Double,
+                  maxX: Double, maxY: Double, maxZ: Double): String {
+        val id = type + "-" + java.util.UUID.randomUUID().toString().substring(0, 8)
+        resourceOf(world).regions.add(
+            RegionData(id, type, minX, minY, minZ, maxX, maxY, maxZ))
+        return id
     }
 
-    /** Creates a marker of [type] centred on [position] with the default half-extent. */
-    fun createMarker(
-        store: Store<EntityStore>,
-        controllerRef: Ref<EntityStore>,
-        type: String,
-        position: Vector3d,
-        halfExtent: Double = 2.0,
-    ): Ref<EntityStore>? = createMarkerWithBounds(
-        store, controllerRef, type,
-        Vector3d(position.x - halfExtent, position.y - halfExtent, position.z - halfExtent),
-        Vector3d(position.x + halfExtent, position.y + halfExtent, position.z + halfExtent),
-    )
+    /** Removes markers of [type] (all types when null). Returns how many were removed. */
+    fun removeMarkers(world: World, type: String? = null): Int {
+        val resource = resourceOf(world)
+        val before = resource.regions.size
+        resource.regions.removeAll { type == null || it.type == type }
+        return before - resource.regions.size
+    }
+
+    /** The type id of the region marker with [id], or null when unknown. */
+    fun typeOf(world: World, id: String): String? =
+        resourceOf(world).regions.firstOrNull { it.id == id }?.type
 }

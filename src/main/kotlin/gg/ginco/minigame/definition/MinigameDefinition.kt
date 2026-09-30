@@ -3,8 +3,9 @@ package gg.ginco.minigame.definition
 import gg.ginco.jellyparty.codec.annotations.SerializableObject
 
 /**
- * A durable minigame definition: everything needed to spawn an instance's
- * teams and region markers without anyone placing them by hand.
+ * A durable minigame definition: the non-spatial config of a game type —
+ * its teams (and future rule data). Region markers are WORLD content
+ * (chunk-store resource) and are not part of definitions.
  *
  * Definitions live as JSON in the plugin's data directory (`definitions/
  * <gameTypeId>.json`), are loaded at boot (and via `/minigame defs reload`),
@@ -22,7 +23,6 @@ data class MinigameDefinition(
     var gameTypeId: String = "",
     var displayName: String = "",
     var teams: List<TeamDefinition> = emptyList(),
-    var markers: List<MarkerDefinition> = emptyList(),
 )
 
 @SerializableObject
@@ -30,16 +30,4 @@ data class TeamDefinition(
     var name: String = "",
     var color: Int = 0xFFFFFF,
     var maxPlayers: Int = -1,
-)
-
-/** A region marker: open type id + axis-aligned box. */
-@SerializableObject
-data class MarkerDefinition(
-    var type: String = "",
-    var minX: Double = 0.0,
-    var minY: Double = 0.0,
-    var minZ: Double = 0.0,
-    var maxX: Double = 0.0,
-    var maxY: Double = 0.0,
-    var maxZ: Double = 0.0,
 )

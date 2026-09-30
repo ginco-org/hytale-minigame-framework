@@ -2,13 +2,11 @@ package gg.ginco.minigame
 
 import com.hypixel.hytale.component.ComponentRegistryProxy
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
-import gg.ginco.minigame.component.Bounds
 import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceStats
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.Phase
-import gg.ginco.minigame.component.RegionMarker
 import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.component.PreservedMembers
 import gg.ginco.minigame.component.Role
@@ -43,9 +41,7 @@ object Components {
         TeamRef.componentType = registry.registerComponent(TeamRef::class.java) { TeamRef() }
         TeamMembers.componentType = registry.registerComponent(TeamMembers::class.java) { TeamMembers() }
 
-        // Regions: geometry + an open type id. The framework fixes no marker
-        // vocabulary — plugins choose their own ids and attach the meaning.
-        Bounds.componentType = registry.registerComponent(Bounds::class.java) { Bounds() }
-        RegionMarker.componentType = registry.registerComponent(RegionMarker::class.java) { RegionMarker() }
+        // Regions are world content (chunk-store resource), not ECS
+        // components — see region/RegionResource.kt + Regions util.
     }
 }
