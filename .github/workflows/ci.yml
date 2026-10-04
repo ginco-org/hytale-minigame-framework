@@ -41,12 +41,14 @@ jobs:
         with:
           repository: ginco-org/hytale-codec
           path: hytale-codec
+          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
       # The org's workflow-token permission is set to "read" for all org
       # repos, so the default GITHUB_TOKEN can check out the sibling repos.
       - uses: actions/checkout@v4
         with:
           repository: ginco-org/hytest
           path: hytest
+          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -68,12 +70,14 @@ jobs:
         with:
           repository: ginco-org/hytale-codec
           path: hytale-codec
+          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
       # The org's workflow-token permission is set to "read" for all org
       # repos, so the default GITHUB_TOKEN can check out the sibling repos.
       - uses: actions/checkout@v4
         with:
           repository: ginco-org/hytest
           path: hytest
+          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
