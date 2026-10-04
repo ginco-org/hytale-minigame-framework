@@ -9,7 +9,6 @@ import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.PreservedMember
 import gg.ginco.minigame.component.PreservedMembers
-import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamMembers
 import gg.ginco.minigame.component.TeamRef
@@ -203,7 +202,6 @@ object Membership {
         store.removeComponentIfExists(ref, InMinigame.componentType)
         store.removeComponentIfExists(ref, Role.componentType)
         store.removeComponentIfExists(ref, TeamRef.componentType)
-        store.removeComponentIfExists(ref, RegionPresence.componentType)
 
         // A voluntary leave cancels any preserved membership for this uuid.
         if (controllerRef != null && controllerRef.isValid()) {

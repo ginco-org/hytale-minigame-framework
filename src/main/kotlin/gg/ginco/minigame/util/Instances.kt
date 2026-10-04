@@ -23,7 +23,6 @@ import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.PendingInstanceEntry
 import gg.ginco.minigame.component.Phase
-import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.component.TeamMembers
@@ -42,8 +41,8 @@ import java.util.concurrent.TimeUnit
  *   instance asset folder (`<packRoot>/Server/Instances/<name>`), copies every
  *   file into a fresh runtime world folder — `instance.bson` and `resources/`
  *   included — and loads it as a new `World`
- *   (`InstancesPlugin.copyAndLoadInstance`). A region marker placed in the
- *   template world's chunk store is therefore cloned into each spawn, while one
+ *   (`InstancesPlugin.copyAndLoadInstance`). Region (trigger-volume) markers
+ *   placed in the template world are therefore cloned into each spawn, while one
  *   placed in the lobby is not.
  * - **The world key is per-spawn.** Without an authored `InstanceKey` (the
  *   default) the key is `instance-<name>-<random uuid>`, so every call yields a
@@ -294,7 +293,6 @@ object Instances {
         store.removeComponentIfExists(playerEntity, InMinigame.componentType)
         store.removeComponentIfExists(playerEntity, Role.componentType)
         store.removeComponentIfExists(playerEntity, TeamRef.componentType)
-        store.removeComponentIfExists(playerEntity, RegionPresence.componentType)
     }
 
     // ---- teardown ------------------------------------------------------------

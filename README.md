@@ -111,11 +111,21 @@ eventRegistry.register(PlayerEnterRegionEvent::class.java) { e ->
 }
 ```
 
+Region storage is the server's builtin **TriggerVolumes** module (no bespoke
+resource any more): `/minigame region add <type>` registers a box-shaped
+`VolumeEntry` tagged `minigame=<type>` in the world's `TriggerVolumeManager`,
+and the builtin's ticking system does the per-tick spatial crossing detection
+that the framework used to hand-roll. The framework's typed events are a thin
+adapter over the builtin `TriggerVolumeEvent` (`system/RegionSystem.kt`), so
+consumers can also listen to `TriggerVolumeEvent` directly if they prefer the
+raw surface.
+
 Marker type ids are **open** — `region add capture-point-a`, `region add
-lasertag-base`, anything. `Regions.markersOf(store, instance, type)` /
-`markerAt(...)` are the query surface for plugin code. One reserved id
-exists: `spawn` markers are the kind the framework acts on itself (teleport
-targets when an instance starts).
+lasertag-base`, anything. `Regions.regionsOf(world, type)` / `Regions.regionAt
+(world, type, position)` are the query surface for plugin code. One reserved
+id exists: `spawn` markers are the kind the framework acts on itself (teleport
+targets when an instance starts, read from spawn **volumes and Points** via
+`Regions.spawnPointsOf(world)`).
 
 Definitions are the durability layer for all of this: markers and teams
 placed in-game can be captured with `defs save` and reload on every boot
@@ -139,7 +149,7 @@ Lifetime stats: when an instance's game ends, its counters and per-player
 counters merge additively into a per-game-type ledger
 (`<dataDir>/stats/<gameTypeId>.json`) — read it via
 `LifetimeStats.load(gameTypeId)`. Atomic writes; merge is additive.
-- Integration tests: 52 `@HytaleTest` methods run inside a real server
+- Integration tests: 68 `@HytaleTest` methods run inside a real server
   via [hytest](https://github.com/ginco-org/hytest) (`./gradlew hytaleTest`);
   hytest loads the real plugin from the merged test jar (SubPlugins manifest),
   so nothing about the framework is stubbed or re-mounted in the harness.
@@ -151,7 +161,7 @@ and untargeted instance commands, and command response text assertions.
 ### Next up
 
 - team assignment (`TeamData` / `TeamMembers`) on join
-- region marker placement + `Bounds` zone checks against player positions
+- region marker placement via the builtin TriggerVolumes/Points tools
 - disconnect/leave handling beyond `/minigame leave`
 
 

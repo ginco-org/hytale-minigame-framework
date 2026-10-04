@@ -37,7 +37,7 @@ class MinigameSpawnTest {
 
     private fun spawnPointCount(t: HytaleTestHelper): Int =
         t.runOnWorldReturning {
-            gg.ginco.minigame.util.Regions.markersOf(t.world, gg.ginco.minigame.util.Regions.SPAWN_TYPE).size
+            gg.ginco.minigame.util.Regions.spawnPointsOf(t.world).size
         }
 
     private fun near(actual: Vector3d, expected: Vector3d, tolerance: Double): Boolean {
@@ -56,7 +56,7 @@ class MinigameSpawnTest {
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(t.world)
             val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
-            val spawns = gg.ginco.minigame.util.Regions.markersOf(t.world, gg.ginco.minigame.util.Regions.SPAWN_TYPE)
+            val spawns = gg.ginco.minigame.util.Regions.regionsOf(t.world, gg.ginco.minigame.util.Regions.SPAWN_TYPE)
             t.assertEquals(1, spawns.size, "exactly one marker should exist")
             val center = spawns.single().center()
             t.assertTrue(near(center, Vector3d(60.0, 64.0, 80.0), 0.5),

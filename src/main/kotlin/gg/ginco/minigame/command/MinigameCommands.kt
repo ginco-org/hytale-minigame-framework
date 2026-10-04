@@ -27,7 +27,6 @@ import gg.ginco.minigame.component.EndReason
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.Phase
-import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.component.TeamMembers

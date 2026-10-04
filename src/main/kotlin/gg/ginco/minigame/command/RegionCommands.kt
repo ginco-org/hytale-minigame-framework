@@ -17,21 +17,25 @@ import gg.ginco.minigame.util.Regions
 import org.joml.Vector3d
 
 /**
- * `/minigame region` — in-world region marker management.
+ * `/minigame region` — in-world region marker management, backed by the
+ * server's builtin **TriggerVolumes** module.
  *
  * Markers are DATA with an open type id: `/minigame region add <type>` records
  * where something is; the framework reports boundary crossings as events
  * (`PlayerEnterRegionEvent` / `PlayerExitRegionEvent` carrying the type) and
- * leaves every decision about what that means to consuming plugins.
+ * leaves every decision about what that means to consuming plugins. A marker is
+ * a builtin trigger volume tagged `minigame=<type>`; the builtin's spatial tick
+ * does the crossing detection and the adapter in
+ * [gg.ginco.minigame.system.RegionSystem] turns its events into ours.
  *
  * The one reserved type is `spawn`: those markers are the framework's teleport
  * targets when an instance starts. Everything else belongs to plugins.
  *
- * Regions are WORLD content: they live in the instance world's chunk store
- * (saved and loaded with the world), are shared by every instance running in
- * that world, and are removed only via `region clear` — not when an instance
- * ends. Region definitions are NOT part of minigame definitions; the world is
- * their durable home.
+ * Regions are WORLD content: they live in the world's builtin
+ * `TriggerVolumeManager` (an `EntityStore` resource, saved and loaded with the
+ * world), are shared by every instance running in that world, and are removed
+ * only via `region clear` — not when an instance ends. Region definitions are
+ * NOT part of minigame definitions; the world is their durable home.
  */
 class RegionCommand : AbstractCommandCollection("region", "minigame.commands.region.desc") {
     init {
@@ -41,9 +45,6 @@ class RegionCommand : AbstractCommandCollection("region", "minigame.commands.reg
     }
 
     companion object {
-        /** Half-extent of the box stored around the chosen position. */
-        const val MARKER_HALF_EXTENT = 2.0
-
         /**
          * The live instance an untargeted marker command applies to: the
          * lowest-id live instance, or the one named by `--game=<id>`. Sends
@@ -89,14 +90,14 @@ class RegionAddCommand : AbstractPlayerCommand("add", "minigame.commands.region.
         // Authoritative position: the sender's TransformComponent in this
         // store. (playerRef.transform lags component teleports.)
         val position = Vector3d(store.getComponent(ref, TransformComponent.getComponentType())!!.position)
-        val extent = RegionCommand.MARKER_HALF_EXTENT
-        val id = Regions.addMarker(
+        val extent = Regions.HALF_EXTENT
+        val id = Regions.addRegion(
             world, type,
             position.x - extent, position.y - extent, position.z - extent,
             position.x + extent, position.y + extent, position.z + extent,
         )
 
-        val count = Regions.markersOf(world, type).size
+        val count = Regions.regionsOf(world, type).size
         context.sendMessage(
             Message.raw("Created $type marker '$id' (#$count of type) at ${RegionCommand.format(position)}.")
         )
@@ -111,7 +112,7 @@ class RegionListCommand : AbstractWorldCommand("list", "minigame.commands.region
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
         val target = RegionCommand.resolveTarget(context, store, gameArg) ?: return
 
-        val markers = Regions.markersOf(world)
+        val markers = Regions.regionsOf(world)
         context.sendMessage(
             if (markers.isEmpty()) Message.raw("No region markers in this world.")
             else Message.raw(
@@ -136,7 +137,7 @@ class RegionClearCommand : AbstractWorldCommand("clear", "minigame.commands.regi
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
         val typeName = if (context.provided(typeArg)) context.get(typeArg) else null
 
-        val removed = Regions.removeMarkers(world, typeName)
+        val removed = Regions.removeRegions(world, typeName)
         val scope = if (typeName != null) " $typeName" else ""
         context.sendMessage(Message.raw("Removed $removed$scope marker(s)."))
     }

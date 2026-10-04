@@ -37,7 +37,9 @@ class PlayerEnterRegionEvent(
 /**
  * Fired when a player leaves a region marker; same payload semantics as
  * [PlayerEnterRegionEvent]. Exit events fire while the marker still exists —
- * markers removed while occupied drop the player's tracked presence silently.
+ * removing a marker while a player occupies it does not emit an exit (the
+ * builtin volume is simply gone), so consumers that need a synthetic exit
+ * should handle that case themselves.
  */
 class PlayerExitRegionEvent(
     val player: PlayerRef,

@@ -13,7 +13,6 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.Phase
-import gg.ginco.minigame.component.RegionPresence
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamRef
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
@@ -114,7 +113,6 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                 store.removeComponentIfExists(player, InMinigame.componentType)
                 store.removeComponentIfExists(player, Role.componentType)
                 store.removeComponentIfExists(player, TeamRef.componentType)
-                store.removeComponentIfExists(player, RegionPresence.componentType)
             }
             // Remove every non-player child entity linked to this instance
             // (teams, spawn-point markers, future marker types) — they must
@@ -144,20 +142,21 @@ class PhaseSystem : TickingSystem<EntityStore>() {
 
     /**
      * Teleports the instance's players to its spawn-point markers when the
-     * game starts: player i goes to marker `i % n` (creation order). With no
-     * markers players simply stay where they are. Runs after the scan, on the
-     * world thread, so direct [TransformComponent] mutation is legal.
+     * game starts: player i goes to target `i % n` (volumes first, then
+     * points, each by id). With no markers players simply stay where they are.
+     * Runs after the scan, on the world thread, so direct [TransformComponent]
+     * mutation is legal.
      */
     private fun teleportPlayersToSpawnPoints(store: Store<EntityStore>, controllerRef: Ref<EntityStore>) {
         val world = store.externalData.world
-        val spawns = Regions.markersOf(world, Regions.SPAWN_TYPE)
+        val spawns = Regions.spawnPointsOf(world)
         if (spawns.isEmpty()) return
 
         val players = PlayerSet(store, controllerRef).all()
         for ((index, player) in players.withIndex()) {
-            val target = spawns[index % spawns.size].center()
+            val target = spawns[index % spawns.size]
             val transform = store.getComponent(player, TransformComponent.getComponentType()) ?: continue
-            transform.teleportPosition(target)
+            target.applyTo(transform)
         }
     }
 }

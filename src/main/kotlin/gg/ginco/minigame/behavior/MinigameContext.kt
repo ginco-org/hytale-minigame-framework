@@ -88,11 +88,11 @@ class MinigameContext internal constructor(
     // ---- regions ----------------------------------------------------------
 
     /** Region markers of [type] (all types when null), world content. */
-    fun regions(type: String? = null): List<Regions.MarkerSnapshot> = Regions.markersOf(world, type)
+    fun regions(type: String? = null): List<Regions.RegionInfo> = Regions.regionsOf(world, type)
 
     /** The first marker of [type] containing [position], or null. */
-    fun regionAt(type: String, position: Vector3d): Regions.MarkerSnapshot? =
-        Regions.markerAt(world, type, position)
+    fun regionAt(type: String, position: Vector3d): Regions.RegionInfo? =
+        Regions.regionAt(world, type, position)
 
     // ---- stats -------------------------------------------------------------
 

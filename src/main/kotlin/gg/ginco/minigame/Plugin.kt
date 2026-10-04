@@ -9,7 +9,6 @@ import gg.ginco.minigame.system.InstanceEntrySystem
 import gg.ginco.minigame.system.PhaseSystem
 import gg.ginco.minigame.system.RegionSystem
 import gg.ginco.minigame.util.Membership
-import gg.ginco.minigame.util.Regions
 import java.util.logging.Level
 
 class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
@@ -17,11 +16,12 @@ class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
     override fun setup() {
         Components.register(entityStoreRegistry)
         entityStoreRegistry.registerSystem(PhaseSystem())
-        entityStoreRegistry.registerSystem(RegionSystem())
+        // Regions are the builtin TriggerVolumes module now; this only wires
+        // our typed events to its crossing events (a bus subscription, not a system).
+        RegionSystem.register()
         // Runs in every world; only acts inside instance worlds, where it
         // finishes a /minigame join whose transfer crossed a world boundary.
         entityStoreRegistry.registerSystem(InstanceEntrySystem())
-        Regions.register(chunkStoreRegistry)
         // Registered in setup() like the server's own lifecycle listeners —
         // start()-time registration does not feed the bus's hasListener()
         // gate, and the disconnect event is silently skipped when no listener

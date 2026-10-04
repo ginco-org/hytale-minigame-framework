@@ -56,7 +56,7 @@ class MinigameRegionEventsTest {
 
         val world = t.world
         val goalId = t.runOnWorldReturning {
-            gg.ginco.minigame.util.Regions.markersOf(world, "goal").single().id
+            gg.ginco.minigame.util.Regions.regionsOf(world, "goal").single().id
         }
 
         alice.runCommand("minigame join").join()
@@ -69,7 +69,7 @@ class MinigameRegionEventsTest {
                     TransformComponent.getComponentType())!!.position)
             }
             val zones = t.runOnWorldReturning {
-                gg.ginco.minigame.util.Regions.markersOf(world).map { "${it.id}/${it.type}:${it.contains(pos)}" }
+                gg.ginco.minigame.util.Regions.regionsOf(world).map { "${it.id}/${it.type}:${it.contains(pos)}" }
             }
             t.assertEquals(1, enters.size,
                 "enter should fire on join (pos=$pos zones=$zones captured=${enters.map { it.type }})")

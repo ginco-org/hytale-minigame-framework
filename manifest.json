@@ -4,5 +4,9 @@
   "Version": "0.1.0",
   "Description": "Minigame framework for Hytale",
   "Main": "gg.ginco.minigame.Plugin",
-  "ServerVersion": "\u003d0.6.8"
+  "ServerVersion": "\u003d0.6.8",
+  "Dependencies": {
+    "Hytale:TriggerVolumes": "*",
+    "Hytale:Points": "*"
+  }
 }
