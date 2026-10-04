@@ -54,8 +54,6 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Publish hytale-codec to mavenLocal
-        run: cd hytale-codec && ./gradlew publishToMavenLocal
       - name: Compile plugin and test sources
         run: ./gradlew compileKotlin jar --no-build-cache
 
