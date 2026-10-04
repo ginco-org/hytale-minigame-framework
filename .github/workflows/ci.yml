@@ -57,7 +57,7 @@ jobs:
       - name: Publish hytale-codec to mavenLocal
         run: cd hytale-codec && ./gradlew publishToMavenLocal
       - name: Compile plugin and test sources
-        run: ./gradlew compileKotlin compileHytaleTestKotlin jar
+        run: ./gradlew compileKotlin compileHytaleTestKotlin jar --no-build-cache
 
   integration:
     name: Integration (suite on a real server)
