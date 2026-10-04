@@ -37,22 +37,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # hytale-codec is private too — same PAT for the sibling checkout (the
-      # definitions schema compiles against its processor via composite build).
       - uses: actions/checkout@v4
         with:
           repository: ginco-org/hytale-codec
           path: hytale-codec
-          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
-      # hytest is private: the default GITHUB_TOKEN is scoped to THIS repo, so
-      # the sibling checkout needs a PAT (GH_CHECKOUT_TOKEN). Alternative once
-      # someone holds admin:org: flip the org workflow-token default to read
-      # and drop this secret again.
+      # The org's workflow-token permission is set to "read" for all org
+      # repos, so the default GITHUB_TOKEN can check out the sibling repos.
       - uses: actions/checkout@v4
         with:
           repository: ginco-org/hytest
           path: hytest
-          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -70,22 +64,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # hytale-codec is private too — same PAT for the sibling checkout (the
-      # definitions schema compiles against its processor via composite build).
       - uses: actions/checkout@v4
         with:
           repository: ginco-org/hytale-codec
           path: hytale-codec
-          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
-      # hytest is private: the default GITHUB_TOKEN is scoped to THIS repo, so
-      # the sibling checkout needs a PAT (GH_CHECKOUT_TOKEN). Alternative once
-      # someone holds admin:org: flip the org workflow-token default to read
-      # and drop this secret again.
+      # The org's workflow-token permission is set to "read" for all org
+      # repos, so the default GITHUB_TOKEN can check out the sibling repos.
       - uses: actions/checkout@v4
         with:
           repository: ginco-org/hytest
           path: hytest
-          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
