@@ -14,9 +14,9 @@ group = "gg.ginco"
 version = "0.1.0"
 
 dependencies {
-    implementation("gg.ginco:hytale-codec-annotations:1.1.0")
-    implementation("gg.ginco:hytale-codec-runtime:1.1.0")
-    ksp("gg.ginco:hytale-codec-processor:1.1.0")
+    implementation("gg.ginco:hytale-codec-annotations:1.2.0")
+    implementation("gg.ginco:hytale-codec-runtime:1.2.0")
+    ksp("gg.ginco:hytale-codec-processor:1.2.0")
 }
 
 // bundleDependencies packs several jars together (kotlinx-serialization is
