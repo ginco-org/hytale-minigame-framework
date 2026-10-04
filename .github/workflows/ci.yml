@@ -57,9 +57,7 @@ jobs:
       - name: Publish hytale-codec to mavenLocal
         run: cd hytale-codec && ./gradlew publishToMavenLocal
       - name: Compile plugin and test sources
-        run: |
-          ./gradlew -PhytestLogs --no-build-cache dependencies --configuration compileClasspath --console=plain | grep -E "hytest|kotlin-serialization" || true
-          ./gradlew compileKotlin compileHytaleTestKotlin jar --no-build-cache
+        run: ./gradlew compileKotlin compileHytaleTestKotlin jar --no-build-cache --refresh-dependencies
 
   integration:
     name: Integration (suite on a real server)
@@ -144,4 +142,4 @@ jobs:
           fi
       - name: Run integration suite
         if: steps.token.outputs.available == 'true'
-        run: ./gradlew hytaleTest -PhytestLogs --no-build-cache
+        run: ./gradlew hytaleTest -PhytestLogs --no-build-cache --refresh-dependencies
