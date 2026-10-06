@@ -31,18 +31,6 @@ dependencyResolutionManagement {
                 "next to this repository (as ../hytest) to build.")
     includeBuild(hytestDir)
 
-    // hytale-codec composite (same candidates as pluginManagement above).
-    val codecDir = listOf(file("hytale-codec"), file("../hytale-codec"), file("/home/agent/projects/hytale-codec"))
-        .firstOrNull { it.resolve("settings.gradle.kts").exists() }
-    if (codecDir != null) {
-        includeBuild(codecDir) {
-            dependencySubstitution {
-                substitute(module("gg.ginco:hytale-codec-annotations")).using(project(":hytale-codec-annotations"))
-                substitute(module("gg.ginco:hytale-codec-processor")).using(project(":hytale-codec-processor"))
-                substitute(module("gg.ginco:hytale-codec-runtime")).using(project(":hytale-codec-runtime"))
-            }
-        }
-    }
 }
 
 rootProject.name = "hytale-minigame-framework"
