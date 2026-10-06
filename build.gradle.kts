@@ -38,14 +38,12 @@ hytale {
 hytest {
     // Forward the server's own logs while debugging a failing test.
     showServerLogs = providers.gradleProperty("hytestLogs").isPresent
-    // Server-run budget. The default 300s fits a handful of tests, but this
-    // suite runs 68 tests on one server, and each per-test world teardown
-    // costs ~30s on 2-core CI runners (server chunk-save pipeline during
-    // world removal): 68 × ~32s ≈ 36 min — run 37448282111 expired the
-    // previous 1800s budget right before the alphabetically-last test
-    // class could run. 3600s ceilings the whole run well under GitHub's
-    // job limit; locally the suite finishes in ~2-3 min, so the ceiling
-    // only matters on CI. A cap, not a delay — local runs are unaffected.
+    // Server-run budget. The default 300s fits a handful of tests; this
+    // suite runs 68 on one server. Per-test lobby teardowns are fast since
+    // hytest@5af8992 (canSaveChunks=false), but instance-world tests still
+    // pay a ~30s removal save each on 2-core CI runners, so the whole run
+    // needs well over 10 min there (runs 37448282111/37456263862 expired
+    // earlier ceilings). A cap, not a delay — local fresh runs take ~80s.
     timeoutSeconds = 3600
     firstFrameGraceSeconds = 180
 }

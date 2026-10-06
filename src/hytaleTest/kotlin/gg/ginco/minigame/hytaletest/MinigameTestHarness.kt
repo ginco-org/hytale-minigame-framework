@@ -114,15 +114,18 @@ object MinigameTestHarness {
         // display name, instance config and return point itself. The world needs
         // no chunk storage of its own — the copy carries the asset's resources
         // folder across, and an empty one is a valid template.
-        // canSaveChunks=false: tests never load a copied instance world back,
-        // so saving is pure teardown cost — world removal blocks in the
-        // server's chunk-save pipeline otherwise (60s+ per instance world on
-        // 2-core CI runners).
+        // Deliberately canSaveChunks=true (the default): unlike the per-test
+        // lobby worlds (TestWorldFactory — empty storage providers, saves are
+        // no-ops), instance worlds keep real storage, and their shutdown saves
+        // chunk-STORE RESOURCES (instance config, framework regions) through
+        // the saving pipeline. With canSaveChunks=false that pipeline is
+        // disabled and Store.shutdown0's saveAllResources0().join() never
+        // completes — the world thread stalls >30s and starves the player
+        // return (CI run 37456263862: two instance tests failed on 2-core
+        // runners). The removal-time chunk save stays as teardown cost here.
         com.hypixel.hytale.server.core.universe.world.WorldConfig
             .save(assetDir.resolve("instance.bson"),
-                com.hypixel.hytale.server.core.universe.world.WorldConfig().apply {
-                    setCanSaveChunks(false)
-                }).join()
+                com.hypixel.hytale.server.core.universe.world.WorldConfig()).join()
         val packId = "gg.ginco:MinigameTestAssets-" + name
         com.hypixel.hytale.server.core.asset.AssetModule.get().registerPack(
             packId, root, com.hypixel.hytale.common.plugin.PluginManifest(),
