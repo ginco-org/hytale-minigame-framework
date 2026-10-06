@@ -3,6 +3,38 @@
 Everything in the original handoff below is done; the blocker is fixed and
 `./gradlew hytaleTest` is green (10 tests, stable across repeated runs).
 
+## Update: CI integration green (68/68 in ~13 min on ubuntu-latest)
+
+Three CI-only failure modes, all root-caused and fixed (runs 37448282111,
+37456263862, 37458914071):
+
+1. **`Unresolved reference 'onEvent'`** — the `HytaleTestHelper.onEvent`
+   member existed only as an uncommitted working-tree edit in the local
+   hytest checkout; CI compiles hytest from a clean sibling checkout.
+   Fixed with a framework-side extension (`hytaletest/EventListening.kt`)
+   built on `HytestPlugin.EVENTS`; delete once hytest ships the member.
+2. **Run budget expired with a class unrun** — per-test lobby-world
+   teardowns cost ~30s each on 2-core runners: `ChunkSavingSystems`
+   blocks on its in-flight semaphore saving chunks at world removal.
+   Fixed in hytest@5af8992: `canSaveChunks = false` on throwaway test
+   worlds (empty storage providers — nothing reads them back, the
+   WorldRemoved and Ticking hooks both skip when the flag is false).
+   Local fresh runs: ~80s. Plus `hytest { timeoutSeconds = 3600 }` as a
+   ceiling.
+3. **Instance-world teardown starved the next test** — instance worlds
+   keep real storage, so their removal saves chunks ~30s; with fast
+   lobby teardowns that save overlapped the next test's body and timed
+   out its instance transfers. Two findings: `canSaveChunks=false` on
+   the instance TEMPLATE is wrong (their shutdown saves chunk-STORE
+   RESOURCES through the pipeline the flag disables —
+   `Store.shutdown0`'s `saveAllResources0().join()` never completes),
+   and `cleanup()` now waits (bounded 60s, best effort) for the world
+   to unload before returning.
+
+Known follow-up: ~1-in-5 LOCAL full-suite runs flake a timing-sensitive
+assert (region crossing or instance transfer, any test, never on CI so
+far). Worth budgets/hardening pass later.
+
 ## Update (supervision session): harness mount replaced by real plugin lifecycle
 
 hytest now ships the plugin under test's manifest on the merged test jar with
