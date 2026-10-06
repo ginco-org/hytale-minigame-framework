@@ -159,6 +159,31 @@ object MinigameTestHarness {
         gg.ginco.minigame.util.Instances.instanceWorlds()
             .firstOrNull { gg.ginco.minigame.util.Instances.assetNameOf(it) == assetName }
 
+    /**
+     * Waits (bounded) until the instance world spawned from [assetName] is no
+     * longer loaded — i.e. the server finished removing it.
+     *
+     * Tests end their instances in `finally`, but the builtin reaps the world
+     * asynchronously and the server's removal pipeline then saves its chunks
+     * — ~30s per world on 2-core CI runners. Letting that overlap the next
+     * test starves its instance work (phase transfers time out mid-assert;
+     * CI run 37458914071). Serializing on the reap costs ~30s per instance
+     * test there, and nothing locally (the reap is sub-second).
+     *
+     * Returns false when the world was still loaded at the deadline: the
+     * caller decides whether that matters (test teardown treats it as best
+     * effort — every test scopes unique asset names, so a lingering world
+     * cannot collide with the next test's).
+     */
+    fun awaitInstanceWorldGone(assetName: String, timeoutMillis: Long = 60_000): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (System.currentTimeMillis() < deadline) {
+            if (instanceWorldOf(assetName) == null) return true
+            Thread.sleep(250)
+        }
+        return instanceWorldOf(assetName) == null
+    }
+
     /** Asserts a player's entity sits in [world]'s store (throws when it does not). */
     fun assertInWorld(player: PlayerRef, world: World) {
         val ref = player.reference ?: error("player ${player.username} is not in a world")

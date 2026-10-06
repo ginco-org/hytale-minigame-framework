@@ -81,6 +81,13 @@ class MinigameInstanceWorldTest {
     private fun cleanup() {
         world?.let { w ->
             runCatching { Instances.runOnWorld(w) { Instances.findController(w)?.let { Instances.endInstance(w, it) } } }
+            // Serialize on the reap: on CI the removal pipeline's chunk save
+            // occupies a world thread ~30s, and overlapping the next test
+            // starves its instance work (see awaitInstanceWorldGone). Best
+            // effort — a lingering world cannot collide with the next test's
+            // uniquely-named asset.
+            runCatching { MinigameTestHarness.awaitInstanceWorldGone(assetName) }
+                .onFailure { System.err.println("[hytest] instance world '$assetName' still loaded after cleanup wait") }
         }
         world = null
         gameTypeId?.let { id -> runCatching { DefinitionStore.remove(id) } }
