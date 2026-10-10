@@ -37,6 +37,7 @@ import gg.ginco.minigame.command.StatsCommand
 import gg.ginco.minigame.util.InstanceRegistry
 import gg.ginco.minigame.util.Instances
 import gg.ginco.minigame.util.Membership
+import gg.ginco.minigame.util.Parties
 import gg.ginco.minigame.util.PlayerSet
 import gg.ginco.minigame.util.Teams
 import org.joml.Vector3d
@@ -80,6 +81,7 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
         addSubCommand(LeaveCommand())
         addSubCommand(TeamCommand())
         addSubCommand(RegionCommand())
+        addSubCommand(PartyCommand())
         addSubCommand(DefsCommand())
         addSubCommand(StatsCommand())
     }
@@ -456,6 +458,27 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
             return
         }
 
+        // A party of more than one joins together: same instance, same team,
+        // all or none — the leader drives it. A single driver keeps the
+        // atomicity check honest: checks and writes below share one
+        // world-thread command execution, so no interleaving join can take
+        // the last team slot between the check and the write.
+        val party = Parties.partyOf(playerRef.uuid)
+        if (party != null && party.size > 1) {
+            if (!party.isLeader(playerRef.uuid)) {
+                context.sendMessage(Message.raw("Only the party leader can start a party join."))
+                return
+            }
+            val partyAsset = if (context.provided(assetArg)) context.get(assetArg) else null
+            if (partyAsset != null) {
+                context.sendMessage(Message.raw("Party joins into instance-asset worlds are not supported yet."))
+                return
+            }
+            val partyTeam = if (context.provided(teamArg)) context.get(teamArg) else null
+            joinAsParty(context, store, playerRef, party, MinigameCommand.targetInstance(context, gameArg), partyTeam)
+            return
+        }
+
         val targetId = MinigameCommand.targetInstance(context, gameArg)
         val target = if (targetId != null) {
             MinigameCommand.snapshot(store).firstOrNull { it.id == targetId && it.isJoinable }
@@ -583,6 +606,112 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
     /** Blocks until [body] has run on [world]'s thread (used for the pre-transfer roster write). */
     private fun onInstanceWorldThread(world: World, body: () -> Unit) {
         Instances.runOnWorld(world, body)
+    }
+
+    /**
+     * The party join: every member lands in the same instance and on the same
+     * team, or nobody joins at all.
+     *
+     * Atomicity is the point — a group join must never strand half a party
+     * inside a full instance while the rest stay out. Every precondition is
+     * checked BEFORE the first membership write, and because a command runs
+     * as one world-thread execution nothing can interleave between the
+     * checks and the writes.
+     *
+     * Team contract: a named `--team` must exist and fit the whole party — a
+     * named team without room rejects the party rather than splitting it
+     * across teams (splitting is a policy call the framework refuses to
+     * make). Without `--team`, the first team with room for the entire party
+     * wins; an instance without teams takes everyone unteamed.
+     */
+    private fun joinAsParty(
+        context: CommandContext,
+        store: Store<EntityStore>,
+        leaderPlayerRef: PlayerRef,
+        party: Parties.Party,
+        targetId: Int?,
+        teamName: String?,
+    ) {
+        val target = if (targetId != null) {
+            MinigameCommand.snapshot(store).firstOrNull { it.id == targetId && it.isJoinable }
+        } else {
+            MinigameCommand.defaultJoinable(store)
+        }
+        if (target == null) {
+            context.sendMessage(Message.raw(
+                if (targetId != null) "Instance #$targetId does not exist or is not joinable right now."
+                else "No joinable instance right now (Waiting or Countdown)."))
+            return
+        }
+
+        // Members must stand in this world and be unattached — a missing or
+        // already-playing member rejects everyone.
+        val members = mutableListOf<Pair<Ref<EntityStore>, PlayerRef>>()
+        for (uuid in party.memberUuids) {
+            val memberRef = PlayerSet.findByUuid(store, uuid)
+            val memberPlayerRef = memberRef?.let { store.getComponent(it, PlayerRef.getComponentType()) }
+            if (memberRef == null || memberPlayerRef == null) {
+                context.sendMessage(Message.raw(
+                    "${party.names[uuid] ?: uuid} is not in this world — the whole party must join from the same world."))
+                return
+            }
+            if (store.getComponent(memberRef, InMinigame.componentType) != null) {
+                context.sendMessage(Message.raw("${memberPlayerRef.username} is already in a minigame."))
+                return
+            }
+            members.add(memberRef to memberPlayerRef)
+        }
+
+        val teams = Teams.of(store, target.ref)
+        val chosen = when {
+            teams.isEmpty() -> null
+            teamName != null -> {
+                val team = teams.firstOrNull { it.data.name == teamName }
+                if (team == null) {
+                    context.sendMessage(Message.raw("No team named '$teamName' in instance #${target.id}."))
+                    return
+                }
+                if (!hasRoomFor(store, team, members.size)) {
+                    context.sendMessage(Message.raw(
+                        "Team '$teamName' cannot fit a party of ${members.size} — nobody joined."))
+                    return
+                }
+                team
+            }
+            else -> teams.firstOrNull { hasRoomFor(store, it, members.size) }.also { team ->
+                if (team == null) {
+                    context.sendMessage(Message.raw(
+                        "No team in instance #${target.id} has room for a party of ${members.size} — nobody joined."))
+                    return
+                }
+            }
+        }
+
+        // All checks passed — apply to every member.
+        for ((memberRef, _) in members) {
+            store.addComponent(memberRef, InMinigame.componentType, InMinigame(target.ref))
+            store.addComponent(memberRef, Role.componentType, Role.participant())
+        }
+        if (chosen != null) {
+            val roster = store.getComponent(chosen.ref, TeamMembers.componentType)?.members
+            for ((memberRef, memberPlayerRef) in members) {
+                store.addComponent(memberRef, TeamRef.componentType, TeamRef(chosen.ref))
+                // Rosters hold uuids: the slot survives disconnects. hasRoomFor
+                // already validated capacity against this same roster.
+                roster?.add(memberPlayerRef.uuid)
+            }
+        }
+        PlayerSet(store, target.ref).sendMessage(
+            Message.raw("${leaderPlayerRef.username}'s party (${members.size} players) joined the minigame."))
+    }
+
+    /** True when [team]'s roster can take [n] more players (maxPlayers <= 0 means uncapped). */
+    private fun hasRoomFor(store: Store<EntityStore>, team: Teams.TeamSnapshot, n: Int): Boolean {
+        val max = team.data.maxPlayers
+        // A team without a roster component counts as full — never a partial join.
+        val roster = store.getComponent(team.ref, TeamMembers.componentType)?.members ?: return false
+        if (max <= 0) return true
+        return roster.size + n <= max
     }
 }
 
