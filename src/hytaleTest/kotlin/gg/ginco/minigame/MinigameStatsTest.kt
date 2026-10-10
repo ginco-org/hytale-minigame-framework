@@ -173,17 +173,26 @@ class MinigameStatsTest {
         t.succeed()
     }
 
-    /** Lifetime ledger: recorded at cleanup, merged across instances. */
+    /**
+     * Lifetime ledger: recorded at cleanup, merged across instances.
+     *
+     * Own game type id + a `before` baseline: discovery order across classes
+     * follows the test jar's entry order, which is not stable across
+     * rebuilds, and the ledger file accumulates whatever wrote it earlier —
+     * an absolute assert here flips green/red on execution order alone.
+     */
     @HytaleTest(timeoutSeconds = 60)
     fun lifetimeStatsRecordAndMerge(t: HytaleTestHelper) {
         val alice = player(t)
-        createInstance(t, alice, "arena")
+        val gameType = "lifetime-record"
+        val before = gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"] ?: 0
+        createInstance(t, alice, gameType)
         alice.runCommand("minigame join").join()
 
         val world = t.world
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(world)
-            val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
+            val controller = MinigameTestHarness.controllerOfGameType(store, gameType)!!
             Stats.add(store, controller, "goals", 2)
             Stats.addForPlayer(store, controller, alice.ref(), "goals", 1)
         }
@@ -197,8 +206,8 @@ class MinigameStatsTest {
             }
         }
 
-        val ledger = gg.ginco.minigame.stats.LifetimeStats.load("arena")
-        t.assertEquals(2, ledger.counters["goals"], "lifetime instance counter should accumulate")
+        val ledger = gg.ginco.minigame.stats.LifetimeStats.load(gameType)
+        t.assertEquals(before + 2, ledger.counters["goals"], "lifetime instance counter should accumulate")
         val playerEntry = ledger.players.singleOrNull { it.uuid == alice.uuid.toString() }
         t.assertNotNull(playerEntry, "player entry should exist")
         t.assertEquals(1, playerEntry?.counters?.get("goals"), "player lifetime counter should accumulate")
@@ -209,15 +218,18 @@ class MinigameStatsTest {
     @HytaleTest(timeoutSeconds = 60)
     fun lifetimeStatsMergeAcrossInstances(t: HytaleTestHelper) {
         val alice = player(t)
-        // Instance #1: 2 goals lifetime so far (from the earlier test's file or fresh).
-        val before = gg.ginco.minigame.stats.LifetimeStats.load("arena").counters["goals"] ?: 0
+        val gameType = "lifetime-merge"
+        // `before`, not an absolute, and an own game type id: the ledger
+        // accumulates whatever ran earlier, and test-class order follows the
+        // rebuilt jar's entry order — not stable across runs.
+        val before = gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"] ?: 0
 
-        createInstance(t, alice, "arena")
+        createInstance(t, alice, gameType)
         alice.runCommand("minigame join").join()
         val world = t.world
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(world)
-            val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
+            val controller = MinigameTestHarness.controllerOfGameType(store, gameType)!!
             Stats.add(store, controller, "goals", 3)
         }
         alice.runCommand("minigame stop").join()
@@ -228,8 +240,94 @@ class MinigameStatsTest {
             }
         }
 
-        t.assertEquals(before + 3, gg.ginco.minigame.stats.LifetimeStats.load("arena").counters["goals"],
+        t.assertEquals(before + 3, gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"],
             "the second instance's goals must ADD to the ledger")
+        t.succeed()
+    }
+
+    /**
+     * Periodic flush: the ledger is written WHILE the instance is live — a
+     * crash mid-game costs the ticks since the last flush, not the game.
+     * PhaseSystem flushes every FLUSH_INTERVAL_TICKS (~10s).
+     */
+    @HytaleTest(timeoutSeconds = 120)
+    fun periodicFlushWritesWhileInstanceIsLive(t: HytaleTestHelper) {
+        val alice = player(t)
+        val gameType = "lifetime-flush"
+        val before = gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"] ?: 0
+        createInstance(t, alice, gameType)
+        alice.runCommand("minigame join").join()
+
+        val world = t.world
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val controller = MinigameTestHarness.controllerOfGameType(store, gameType)!!
+            Stats.add(store, controller, "goals", 2)
+        }
+
+        // Still playing — no stop, no cleanup — and the ledger already holds
+        // the counters. 6x the flush interval covers scheduler jitter.
+        t.assertEventually(60) {
+            t.runOnWorld {
+                t.assertTrue(MinigameTestHarness.controllers(MinigameTestHarness.storeOf(world)).isNotEmpty(),
+                    "the instance must still be live — this is a mid-game flush")
+            }
+            t.assertEquals(before + 2, gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"],
+                "the periodic flush should write the live counters to the ledger")
+        }
+
+        alice.runCommand("minigame stop").join()
+        t.assertEventually {
+            t.runOnWorld {
+                t.assertTrue(MinigameTestHarness.controllers(MinigameTestHarness.storeOf(world)).isEmpty(),
+                    "instance should be gone")
+            }
+        }
+        t.succeed()
+    }
+
+    /**
+     * No double-count across flush and final merge: counters added before a
+     * flush and counters added after it must appear exactly once in total.
+     */
+    @HytaleTest(timeoutSeconds = 120)
+    fun finalMergeDoesNotDoubleCountAfterFlushes(t: HytaleTestHelper) {
+        val alice = player(t)
+        val gameType = "lifetime-final"
+        val before = gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"] ?: 0
+        createInstance(t, alice, gameType)
+        alice.runCommand("minigame join").join()
+
+        val world = t.world
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val controller = MinigameTestHarness.controllerOfGameType(store, gameType)!!
+            Stats.add(store, controller, "goals", 2)
+        }
+        // Wait for one periodic flush to fire with the first 2 on board.
+        t.assertEventually(60) {
+            t.assertEquals(before + 2, gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"],
+                "the pre-stop counters should be flushed while live")
+        }
+        // Then more play AFTER the flush.
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val controller = MinigameTestHarness.controllerOfGameType(store, gameType)!!
+            Stats.add(store, controller, "goals", 3)
+        }
+
+        alice.runCommand("minigame stop").join()
+        t.assertEventually {
+            t.runOnWorld {
+                t.assertTrue(MinigameTestHarness.controllers(MinigameTestHarness.storeOf(world)).isEmpty(),
+                    "instance should be gone")
+            }
+        }
+
+        // 2 (flushed) + 3 (final delta) — a final merge that re-recorded the
+        // flushed 2 would read before + 7.
+        t.assertEquals(before + 5, gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"],
+            "flushed counters must not be counted again by the final merge")
         t.succeed()
     }
 }

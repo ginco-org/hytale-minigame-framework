@@ -12,7 +12,6 @@ import gg.ginco.minigame.event.PhaseChangedEvent
 import gg.ginco.minigame.event.PlayerEnterRegionEvent
 import gg.ginco.minigame.hytaletest.MinigameTestHarness
 import gg.ginco.minigame.hytaletest.Players
-import gg.ginco.minigame.hytaletest.onEvent
 import gg.ginco.minigame.util.Regions
 import gg.ginco.minigame.util.Stats
 import java.util.concurrent.CopyOnWriteArrayList

@@ -77,5 +77,22 @@ class PlayerSet(
             store.forEachChunk(Archetype.of(PlayerRef.getComponentType()), consumer)
             return found
         }
+
+        /**
+         * The player entity + PlayerRef carrying [username], or null. Names
+         * are unique among connected players; the scan is this store's, so
+         * the caller can only find players in its own world.
+         */
+        fun findByUsername(store: Store<EntityStore>, username: String): Pair<Ref<EntityStore>, PlayerRef>? {
+            var found: Pair<Ref<EntityStore>, PlayerRef>? = null
+            val consumer = BiConsumer { chunk: ArchetypeChunk<EntityStore>, buffer: CommandBuffer<EntityStore> ->
+                for (i in 0 until chunk.size()) {
+                    val player = chunk.getComponent(i, PlayerRef.getComponentType()) ?: continue
+                    if (player.username == username) found = chunk.getReferenceTo(i) to player
+                }
+            }
+            store.forEachChunk(Archetype.of(PlayerRef.getComponentType()), consumer)
+            return found
+        }
     }
 }

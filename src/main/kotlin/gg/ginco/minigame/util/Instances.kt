@@ -258,6 +258,9 @@ object Instances {
                 break
             }
         }
+        // Arrival into an instance world is also a join: participants landing
+        // now must not see the spectators who are already watching.
+        Roles.hideSpectatorsFrom(store, controllerRef, playerEntity)
     }
 
     /**

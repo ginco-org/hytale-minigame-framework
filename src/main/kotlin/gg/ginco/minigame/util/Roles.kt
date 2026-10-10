@@ -24,8 +24,9 @@ object Roles {
 
     /**
      * Makes [playerRef] a mechanical spectator: Creative game mode (0.6.8 has
-     * no spectator mode — flight is the stand-in), flight enabled, and hidden
-     * from every other member of their minigame instance.
+     * no spectator mode — flight is the stand-in), flight enabled, no-clip so
+     * they can move through the arena, and hidden from every other member of
+     * their minigame instance.
      *
      * Note: these are entity mechanics — they do not survive a
      * disconnect/rejoin (the player entity is rebuilt fresh). Consumers that
@@ -35,13 +36,15 @@ object Roles {
     fun spectate(store: Store<EntityStore>, ref: Ref<EntityStore>, playerRef: PlayerRef) {
         setGameMode(store, ref, GameMode.Creative)
         setFlying(store, ref, true)
+        setNoClip(store, ref, true)
         setHiddenFromMembers(store, ref, playerRef, hidden = true)
     }
 
-    /** Reverses [spectate]: Adventure, no flight, visible to instance members again. */
+    /** Reverses [spectate]: Adventure, no flight, collision restored, visible to instance members again. */
     fun unspectate(store: Store<EntityStore>, ref: Ref<EntityStore>, playerRef: PlayerRef) {
         setGameMode(store, ref, GameMode.Adventure)
         setFlying(store, ref, false)
+        setNoClip(store, ref, false)
         setHiddenFromMembers(store, ref, playerRef, hidden = false)
     }
 
@@ -81,5 +84,28 @@ object Roles {
             val manager = memberPlayerRef.hiddenPlayersManager
             if (hidden) manager.hidePlayer(playerRef.uuid) else manager.showPlayer(playerRef.uuid)
         }
+    }
+
+    /**
+     * Hides every current spectator of the instance from [newcomerRef]'s
+     * player — spectating predates the newcomer's membership, so their view
+     * must catch up at the moment they join (or rejoin) the instance.
+     *
+     * The one-sided direction is deliberate: the newcomer is a participant;
+     * the spectators are the ones who must be invisible.
+     */
+    fun hideSpectatorsFrom(store: Store<EntityStore>, controllerRef: Ref<EntityStore>, newcomerRef: Ref<EntityStore>) {
+        val newcomerPlayerRef = store.getComponent(newcomerRef, PlayerRef.getComponentType()) ?: return
+        for (spectator in PlayerSet(store, controllerRef).withRole(Role.spectator())) {
+            if (spectator == newcomerRef) continue
+            val spectatorPlayerRef = store.getComponent(spectator, PlayerRef.getComponentType()) ?: continue
+            newcomerPlayerRef.hiddenPlayersManager.hidePlayer(spectatorPlayerRef.uuid)
+        }
+    }
+
+    private fun setNoClip(store: Store<EntityStore>, ref: Ref<EntityStore>, noClip: Boolean) {
+        // notify=false: a silent mechanic flip — the HUD toast is for manual
+        // cheat-style toggles, not for becoming a spectator.
+        store.getComponent(ref, Player.getComponentType())?.setNoClip(ref, noClip, false, store)
     }
 }

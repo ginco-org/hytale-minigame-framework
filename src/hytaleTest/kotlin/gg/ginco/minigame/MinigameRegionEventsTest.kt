@@ -13,7 +13,6 @@ import gg.ginco.minigame.event.PlayerExitRegionEvent
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import gg.ginco.minigame.hytaletest.MinigameTestHarness
 import gg.ginco.minigame.hytaletest.Players
-import gg.ginco.minigame.hytaletest.onEvent
 import gg.ginco.minigame.util.Roles
 import org.joml.Vector3d
 
@@ -23,8 +22,7 @@ import org.joml.Vector3d
  * [gg.ginco.minigame.event.PlayerExitRegionEvent] — nothing else. These
  * tests double as the reference for consuming plugins: the win/kill
  * behaviour here lives entirely in TEST-side listeners (hytest's
- * `captureEvents` plus the harness's `onEvent` extension until hytest ships
- * it), exactly where a real plugin would put it.
+ * `captureEvents` + `onEvent`), exactly where a real plugin would put it.
  *
  * Regions are world content: each test's world starts empty, markers are
  * placed with `/minigame region add <type>`, and events carry the marker's
@@ -237,14 +235,16 @@ class MinigameRegionEventsTest {
         val alice = player(t)
         createInstance(t, alice, "arena")
         alice.teleport(5.0, 64.0, 5.0).join()
-        alice.runCommand("minigame region add laser-base").join()
-        // Capture BEFORE joining: she is standing inside the marker, so the
-        // enter fires on the first region tick after the join.
+        // Capture BEFORE placing the region, exactly like the sibling tests:
+        // the builtin applies a volume registration on its next tick, and a
+        // player already standing inside fires ENTER right then — the join is
+        // irrelevant to the crossing. Registering after `region add` races
+        // that first tick and can miss the only ENTER there will ever be.
         val enters = t.captureEvents(PlayerEnterRegionEvent::class.java)
+        alice.runCommand("minigame region add laser-base").join()
         alice.runCommand("minigame join").join()
         alice.drainReceivedMessages()
 
-        alice.teleport(5.0, 64.0, 5.0).join() // into the custom marker
         t.assertEventually {
             t.assertTrue(enters.isNotEmpty(), "enter should fire for a custom type id")
             t.assertEquals("laser-base", enters.single().type, "the event should carry the plugin's own type id")

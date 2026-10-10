@@ -48,11 +48,18 @@ class PhaseSystem : TickingSystem<EntityStore>() {
     override fun tick(dt: Float, systemIndex: Int, store: Store<EntityStore>) {
         val finished = mutableListOf<Ref<EntityStore>>()
         val started = mutableListOf<Ref<EntityStore>>()
+        // Stats flush candidates — only collected on a due tick, so the scan
+        // below stays free of extra work the other 199 ticks out of 200.
+        val statsHolders = mutableListOf<Ref<EntityStore>>()
+        val flushDue = tickAndCheckFlushDue()
 
         val scanControllers = BiConsumer { chunk: ArchetypeChunk<EntityStore>, buffer: CommandBuffer<EntityStore> ->
             for (i in 0 until chunk.size()) {
                 val ref = chunk.getReferenceTo(i)
                 val phase = chunk.getComponent(i, Phase.componentType) ?: continue
+                if (flushDue && chunk.getComponent(i, gg.ginco.minigame.component.InstanceStats.componentType) != null) {
+                    statsHolders.add(ref)
+                }
 
                 when (phase.kind) {
                     Phase.Kind.COUNTDOWN -> {
@@ -87,6 +94,20 @@ class PhaseSystem : TickingSystem<EntityStore>() {
 
         for (ref in started) {
             teleportPlayersToSpawnPoints(store, ref)
+        }
+
+        // Periodic stats flush while the game is LIVE — a crash mid-game then
+        // costs the ticks since the last flush, not the whole game's counters.
+        // Runs post-scan (outside the processing lock); each instance's write
+        // is isolated so one bad ledger cannot kill the tick thread.
+        if (flushDue) {
+            for (ref in statsHolders) {
+                try {
+                    gg.ginco.minigame.stats.LifetimeStats.flush(store, ref)
+                } catch (e: Exception) {
+                    println("[MinigameFramework] periodic stats flush failed for $ref: $e")
+                }
+            }
         }
 
         for (ref in finished) {
@@ -158,5 +179,29 @@ class PhaseSystem : TickingSystem<EntityStore>() {
             val transform = store.getComponent(player, TransformComponent.getComponentType()) ?: continue
             target.applyTo(transform)
         }
+    }
+
+    /** Advances this world's tick counter; true on flush-due ticks. */
+    private fun tickAndCheckFlushDue(): Boolean {
+        val n = TICK_COUNTER.get() + 1
+        TICK_COUNTER.set(n)
+        return n % FLUSH_INTERVAL_TICKS == 0
+    }
+
+    companion object {
+        /**
+         * Ticks between periodic stats flushes (200 = ~10s at 20 TPS): often
+         * enough that a crash costs little, rarely enough that the atomic
+         * temp+move write stays noise.
+         */
+        internal const val FLUSH_INTERVAL_TICKS = 200
+
+        /**
+         * One counter per WORLD THREAD: a single PhaseSystem instance is
+         * ticked by every world, and each world's store may only be touched
+         * from its own thread (same pattern as the builtin TriggerVolumes
+         * system's thread-local scratch state).
+         */
+        private val TICK_COUNTER = ThreadLocal.withInitial { 0 }
     }
 }
