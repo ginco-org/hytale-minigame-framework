@@ -42,6 +42,8 @@ Second vertical slice implemented:
     teams and memberships
   - `region add <type> [--game=<id>]`, `region list [--game=<id>]`,
     `region clear [--type=<type>]` — in-game marker creation at your position
+  - `party create|invite <name>|accept|leave|list` — parties: groups that
+    join together (see below)
   - disconnect semantics: **membership is preserved until the minigame
     ends** — rosters are uuid-keyed and the instance keeps a preserved-
     membership record (role included), so a returning player who runs
@@ -52,16 +54,29 @@ Second vertical slice implemented:
     loaded at boot; `defs save` captures a live instance's teams and markers
     (the in-game editor write path) and `create <gametype>` then spawns new
     instances fully set-up from the definition
-  - disconnect semantics: **membership is preserved until the minigame
-    ends** — rosters are uuid-keyed and the instance keeps a preserved-
-    membership record (role included), so a returning player who runs
-    `/minigame join` is restored into their exact instance, role and team.
-    Voluntary `/minigame leave` still releases everything immediately
-  - `defs list|reload|save [--game=<id>]` — durable minigame definitions:
-    JSON in the plugin data directory (`definitions/<gameTypeId>.json`),
-    loaded at boot; `defs save` captures a live instance's teams and markers
-    (the in-game editor write path) and `create <gametype>` then spawns new
-    instances fully set-up from the definition
+
+## Parties
+
+A party is a group of players that joins a minigame together and lands on
+the same team. The framework provides the plumbing — state, lifecycle,
+leader-driven group join — not game rules.
+
+- State is uuid-keyed and runtime-only (like team rosters and preserved
+  membership), so it survives disconnects; a disconnect destroys the
+  entity, not the uuid.
+- The leader invites (`party invite <name>`, target resolved in the
+  inviter's world) and the leader drives the join: `/minigame join` with a
+  party of more than one joins **everyone** into the same instance and the
+  same team — all or nothing. Every precondition (everyone present and
+  unattached, a team with room for the whole party) is checked before the
+  first membership write; a full team rejects the whole party rather than
+  splitting it, because splitting is a policy call the framework refuses
+  to make.
+- The leader leaving disbands the party; joining does not consume it.
+
+Deferred ideas (deliberately not in v1): leader transfer on leader leave,
+  invitation expiry, cross-world invites, party joins into instance-asset
+  worlds (explicitly rejected for now), party-wide leave of a minigame.
 
 ## Instance worlds
 
