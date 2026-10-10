@@ -244,4 +244,90 @@ class MinigameStatsTest {
             "the second instance's goals must ADD to the ledger")
         t.succeed()
     }
+
+    /**
+     * Periodic flush: the ledger is written WHILE the instance is live — a
+     * crash mid-game costs the ticks since the last flush, not the game.
+     * PhaseSystem flushes every FLUSH_INTERVAL_TICKS (~10s).
+     */
+    @HytaleTest(timeoutSeconds = 120)
+    fun periodicFlushWritesWhileInstanceIsLive(t: HytaleTestHelper) {
+        val alice = player(t)
+        val gameType = "lifetime-flush"
+        val before = gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"] ?: 0
+        createInstance(t, alice, gameType)
+        alice.runCommand("minigame join").join()
+
+        val world = t.world
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val controller = MinigameTestHarness.controllerOfGameType(store, gameType)!!
+            Stats.add(store, controller, "goals", 2)
+        }
+
+        // Still playing — no stop, no cleanup — and the ledger already holds
+        // the counters. 6x the flush interval covers scheduler jitter.
+        t.assertEventually(60) {
+            t.runOnWorld {
+                t.assertTrue(MinigameTestHarness.controllers(MinigameTestHarness.storeOf(world)).isNotEmpty(),
+                    "the instance must still be live — this is a mid-game flush")
+            }
+            t.assertEquals(before + 2, gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"],
+                "the periodic flush should write the live counters to the ledger")
+        }
+
+        alice.runCommand("minigame stop").join()
+        t.assertEventually {
+            t.runOnWorld {
+                t.assertTrue(MinigameTestHarness.controllers(MinigameTestHarness.storeOf(world)).isEmpty(),
+                    "instance should be gone")
+            }
+        }
+        t.succeed()
+    }
+
+    /**
+     * No double-count across flush and final merge: counters added before a
+     * flush and counters added after it must appear exactly once in total.
+     */
+    @HytaleTest(timeoutSeconds = 120)
+    fun finalMergeDoesNotDoubleCountAfterFlushes(t: HytaleTestHelper) {
+        val alice = player(t)
+        val gameType = "lifetime-final"
+        val before = gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"] ?: 0
+        createInstance(t, alice, gameType)
+        alice.runCommand("minigame join").join()
+
+        val world = t.world
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val controller = MinigameTestHarness.controllerOfGameType(store, gameType)!!
+            Stats.add(store, controller, "goals", 2)
+        }
+        // Wait for one periodic flush to fire with the first 2 on board.
+        t.assertEventually(60) {
+            t.assertEquals(before + 2, gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"],
+                "the pre-stop counters should be flushed while live")
+        }
+        // Then more play AFTER the flush.
+        t.runOnWorld {
+            val store = MinigameTestHarness.storeOf(world)
+            val controller = MinigameTestHarness.controllerOfGameType(store, gameType)!!
+            Stats.add(store, controller, "goals", 3)
+        }
+
+        alice.runCommand("minigame stop").join()
+        t.assertEventually {
+            t.runOnWorld {
+                t.assertTrue(MinigameTestHarness.controllers(MinigameTestHarness.storeOf(world)).isEmpty(),
+                    "instance should be gone")
+            }
+        }
+
+        // 2 (flushed) + 3 (final delta) — a final merge that re-recorded the
+        // flushed 2 would read before + 7.
+        t.assertEquals(before + 5, gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"],
+            "flushed counters must not be counted again by the final merge")
+        t.succeed()
+    }
 }
