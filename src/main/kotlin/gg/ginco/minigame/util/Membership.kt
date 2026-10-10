@@ -182,6 +182,9 @@ object Membership {
                 break
             }
         }
+        // The returning player's view is fresh (entity mechanics do not
+        // survive a disconnect) — catch it up on who is spectating.
+        Roles.hideSpectatorsFrom(store, controllerRef, ref)
         preservedList.remove(entry)
         return true
     }

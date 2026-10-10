@@ -534,6 +534,9 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
     ) {
         store.addComponent(ref, InMinigame.componentType, InMinigame(target.ref))
         store.addComponent(ref, Role.componentType, Role.participant())
+        // A participant who joins now must not see the spectators who are
+        // already watching — spectate hid them from the members of ITS time.
+        gg.ginco.minigame.util.Roles.hideSpectatorsFrom(store, target.ref, ref)
         PlayerSet(store, target.ref).sendMessage(Message.raw("${playerRef.username} joined the minigame."))
     }
 
@@ -691,6 +694,7 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
         for ((memberRef, _) in members) {
             store.addComponent(memberRef, InMinigame.componentType, InMinigame(target.ref))
             store.addComponent(memberRef, Role.componentType, Role.participant())
+            gg.ginco.minigame.util.Roles.hideSpectatorsFrom(store, target.ref, memberRef)
         }
         if (chosen != null) {
             val roster = store.getComponent(chosen.ref, TeamMembers.componentType)?.members

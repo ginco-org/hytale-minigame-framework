@@ -140,4 +140,10 @@ jobs:
           fi
       - name: Run integration suite
         if: steps.token.outputs.available == 'true'
+        # The server JVM now needs a 5G heap (the suite outgrew hytest's 4G
+        # default at ~75 tests — see build.gradle.kts), and ubuntu-latest
+        # runners have 7G: cap the Gradle daemon so daemon + test worker +
+        # server fit. The daemon is idle while the server runs.
+        env:
+          GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx1g
         run: ./gradlew hytaleTest -PhytestLogs --no-build-cache --refresh-dependencies

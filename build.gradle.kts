@@ -38,6 +38,13 @@ hytale {
 hytest {
     // Forward the server's own logs while debugging a failing test.
     showServerLogs = providers.gradleProperty("hytestLogs").isPresent
+    // The suite outgrew hytest's default 4G server heap at ~75 tests: torn-down
+    // per-test worlds are reclaimed too slowly/lazily, the heap fills near the
+    // end of the run and the JVM drops into a GC death spiral (all cores in
+    // GC threads, world creation for a late test never completes). 5G holds
+    // the whole 76-test run with margin locally; it also fits GitHub's 7G
+    // standard runners next to the Gradle daemon.
+    jvmArgs = listOf("-Xmx5G", "-Xms1G")
     // Server-run budget. The default 300s fits a handful of tests; this
     // suite runs 68 on one server. Per-test lobby teardowns are fast since
     // hytest@5af8992 (canSaveChunks=false), but instance-world tests still
