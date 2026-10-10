@@ -13,7 +13,6 @@ import gg.ginco.minigame.event.PlayerExitRegionEvent
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import gg.ginco.minigame.hytaletest.MinigameTestHarness
 import gg.ginco.minigame.hytaletest.Players
-import gg.ginco.minigame.hytaletest.onEvent
 import gg.ginco.minigame.util.Roles
 import org.joml.Vector3d
 
@@ -23,8 +22,7 @@ import org.joml.Vector3d
  * [gg.ginco.minigame.event.PlayerExitRegionEvent] — nothing else. These
  * tests double as the reference for consuming plugins: the win/kill
  * behaviour here lives entirely in TEST-side listeners (hytest's
- * `captureEvents` plus the harness's `onEvent` extension until hytest ships
- * it), exactly where a real plugin would put it.
+ * `captureEvents` + `onEvent`), exactly where a real plugin would put it.
  *
  * Regions are world content: each test's world starts empty, markers are
  * placed with `/minigame region add <type>`, and events carry the marker's
