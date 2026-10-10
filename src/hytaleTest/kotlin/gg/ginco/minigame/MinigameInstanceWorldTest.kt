@@ -245,29 +245,37 @@ class MinigameInstanceWorldTest {
             }
 
             // Refs cannot cross stores: everything is read, and the controller
-            // identity compared, inside the instance world.
-            val membership = onInstanceWorld(world) {
-                val store = world.entityStore.store
-                val ref = alice.ref().reference!!
-                val inMinigame = MinigameTestHarness.inMinigameOf(store, ref)
-                val teamRef = store.getComponent(ref, gg.ginco.minigame.component.TeamRef.componentType)?.teamRef
-                MembershipSnapshot(
-                    inMinigame?.controllerRef,
-                    MinigameTestHarness.roleOf(store, ref),
-                    teamRef?.let { store.getComponent(it, gg.ginco.minigame.component.TeamData.componentType)?.name },
-                )
-            }
+            // identity compared, inside the instance world. Arrival and the
+            // membership write are separate ticks (InstanceEntrySystem applies
+            // InMinigame/Role/TeamRef on its tick after the entity lands, as
+            // three sequential component writes), so poll for the COMPLETE
+            // membership instead of snapshotting the moment arrival is
+            // detected — a read between the writes sees a half-applied state.
             val controller = onInstanceWorld(world) { Instances.findController(world, gameTypeId!!) }
+            t.assertNotNull(controller, "the instance world should hold a controller")
 
-            onInstanceWorld(world) {
-                t.assertNotNull(controller, "the instance world should hold a controller")
+            var membership: MembershipSnapshot? = null
+            t.assertEventually(60) {
+                membership = onInstanceWorld(world) {
+                    val store = world.entityStore.store
+                    val ref = alice.ref().reference!!
+                    val inMinigame = MinigameTestHarness.inMinigameOf(store, ref)
+                    val teamRef = store.getComponent(ref, gg.ginco.minigame.component.TeamRef.componentType)?.teamRef
+                    MembershipSnapshot(
+                        inMinigame?.controllerRef,
+                        MinigameTestHarness.roleOf(store, ref),
+                        teamRef?.let {
+                            store.getComponent(it, gg.ginco.minigame.component.TeamData.componentType)?.name
+                        },
+                    )
+                }
                 t.assertEquals(controller, membership.controllerRef,
                     "the membership should link to the instance world's own controller")
+                t.assertEquals(Role.participant(), membership.role,
+                    "player should be a participant in the instance world")
+                t.assertEquals("red", membership.teamName,
+                    "the roster holds uuids, so the player should be linked to their team on arrival")
             }
-            t.assertEquals(Role.participant(), membership.role,
-                "player should be a participant in the instance world")
-            t.assertEquals("red", membership.teamName,
-                "the roster holds uuids, so the player should be linked to their team on arrival")
             t.succeed()
         } finally {
             cleanup()

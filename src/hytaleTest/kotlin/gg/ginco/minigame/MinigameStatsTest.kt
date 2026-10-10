@@ -173,17 +173,26 @@ class MinigameStatsTest {
         t.succeed()
     }
 
-    /** Lifetime ledger: recorded at cleanup, merged across instances. */
+    /**
+     * Lifetime ledger: recorded at cleanup, merged across instances.
+     *
+     * Own game type id + a `before` baseline: discovery order across classes
+     * follows the test jar's entry order, which is not stable across
+     * rebuilds, and the ledger file accumulates whatever wrote it earlier —
+     * an absolute assert here flips green/red on execution order alone.
+     */
     @HytaleTest(timeoutSeconds = 60)
     fun lifetimeStatsRecordAndMerge(t: HytaleTestHelper) {
         val alice = player(t)
-        createInstance(t, alice, "arena")
+        val gameType = "lifetime-record"
+        val before = gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"] ?: 0
+        createInstance(t, alice, gameType)
         alice.runCommand("minigame join").join()
 
         val world = t.world
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(world)
-            val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
+            val controller = MinigameTestHarness.controllerOfGameType(store, gameType)!!
             Stats.add(store, controller, "goals", 2)
             Stats.addForPlayer(store, controller, alice.ref(), "goals", 1)
         }
@@ -197,8 +206,8 @@ class MinigameStatsTest {
             }
         }
 
-        val ledger = gg.ginco.minigame.stats.LifetimeStats.load("arena")
-        t.assertEquals(2, ledger.counters["goals"], "lifetime instance counter should accumulate")
+        val ledger = gg.ginco.minigame.stats.LifetimeStats.load(gameType)
+        t.assertEquals(before + 2, ledger.counters["goals"], "lifetime instance counter should accumulate")
         val playerEntry = ledger.players.singleOrNull { it.uuid == alice.uuid.toString() }
         t.assertNotNull(playerEntry, "player entry should exist")
         t.assertEquals(1, playerEntry?.counters?.get("goals"), "player lifetime counter should accumulate")
@@ -209,15 +218,18 @@ class MinigameStatsTest {
     @HytaleTest(timeoutSeconds = 60)
     fun lifetimeStatsMergeAcrossInstances(t: HytaleTestHelper) {
         val alice = player(t)
-        // Instance #1: 2 goals lifetime so far (from the earlier test's file or fresh).
-        val before = gg.ginco.minigame.stats.LifetimeStats.load("arena").counters["goals"] ?: 0
+        val gameType = "lifetime-merge"
+        // `before`, not an absolute, and an own game type id: the ledger
+        // accumulates whatever ran earlier, and test-class order follows the
+        // rebuilt jar's entry order — not stable across runs.
+        val before = gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"] ?: 0
 
-        createInstance(t, alice, "arena")
+        createInstance(t, alice, gameType)
         alice.runCommand("minigame join").join()
         val world = t.world
         t.runOnWorld {
             val store = MinigameTestHarness.storeOf(world)
-            val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
+            val controller = MinigameTestHarness.controllerOfGameType(store, gameType)!!
             Stats.add(store, controller, "goals", 3)
         }
         alice.runCommand("minigame stop").join()
@@ -228,7 +240,7 @@ class MinigameStatsTest {
             }
         }
 
-        t.assertEquals(before + 3, gg.ginco.minigame.stats.LifetimeStats.load("arena").counters["goals"],
+        t.assertEquals(before + 3, gg.ginco.minigame.stats.LifetimeStats.load(gameType).counters["goals"],
             "the second instance's goals must ADD to the ledger")
         t.succeed()
     }
