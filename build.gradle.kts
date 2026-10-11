@@ -1,4 +1,6 @@
 import org.gradle.api.file.DuplicatesStrategy
+import org.gradle.api.Task
+import com.vanniktech.maven.publish.MavenPublishBaseExtension
 plugins {
     // hygradle comes onto the classpath via gg.ginco.hygradle.settings (0.5.0) in
     // settings.gradle.kts, so no version is declared here.
@@ -10,15 +12,19 @@ plugins {
     // (gg.ginco.hytest:runtime/:junit5/:gradle-plugin) — the plugin adds the
     // runtime artifacts itself, pinned to its own version.
     id("gg.ginco.hytest") version "0.1.0"
+    id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
 group = "gg.ginco"
 version = "0.1.0"
 
 dependencies {
-    implementation("gg.ginco:hytale-codec-annotations:1.2.0")
-    implementation("gg.ginco:hytale-codec-runtime:1.2.0")
-    ksp("gg.ginco:hytale-codec-processor:1.2.0")
+    // api (not implementation) so the published POM exposes codec as a
+    // compile-scope dependency: consumers of the framework's definition API
+    // see codec types through it.
+    api("gg.ginco:hytale-codec-annotations:1.2.1")
+    api("gg.ginco:hytale-codec-runtime:1.2.1")
+    ksp("gg.ginco:hytale-codec-processor:1.2.1")
 }
 
 // bundleDependencies packs several jars together (kotlinx-serialization is
@@ -55,4 +61,59 @@ hytest {
     // earlier ceilings). A cap, not a delay — local fresh runs take ~80s.
     timeoutSeconds = 3600
     firstFrameGraceSeconds = 180
+}
+
+// --- Maven Central publication (thin API artifact) ---------------------------
+// The default `jar` task is the SELF-CONTAINED plugin jar (hygradle bundles
+// runtimeClasspath into it and stamps the plugin manifest) — that is the
+// server-distribution artifact, not a dependency. What Central gets instead
+// is `thinJar`: exactly this project's classes, with the real dependency
+// graph in the POM (kotlin-stdlib, codec via api; the Hytale Server API
+// stays compileOnly and is deliberately absent — consumers declare it
+// themselves against maven.hytale.com, like every Hytale plugin build).
+val thinJar = tasks.register<Jar>("thinJar") {
+    archiveClassifier.set("thin")
+    from(sourceSets.main.get().output)
+}
+
+// Point the java component's outgoing variants at thinJar so both the
+// publication (vanniktech publishes from(components["java"])) and consumer
+// resolution metadata resolve the thin artifact under the main coordinates.
+for (variant in listOf("apiElements", "runtimeElements")) {
+    configurations.named(variant) {
+        val jarTask = tasks.named("jar").get()
+        outgoing.artifacts.removeIf { artifact ->
+            artifact.buildDependencies.getDependencies(null as Task?).contains(jarTask)
+        }
+        outgoing.artifact(thinJar)
+    }
+}
+
+extensions.configure<MavenPublishBaseExtension> {
+    publishToMavenCentral(automaticRelease = true)
+    signAllPublications()
+
+    pom {
+        name = "hytale-minigame-framework"
+        description = "Minigame framework for Hytale: instances, phases, teams, regions, roles, stats, behaviors"
+        url = "https://github.com/ginco-org/hytale-minigame-framework"
+        licenses {
+            license {
+                name = "Apache-2.0"
+                url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+            }
+        }
+        developers {
+            developer {
+                id = "ginco"
+                name = "GINCo"
+                url = "https://ginco.gg"
+            }
+        }
+        scm {
+            connection = "scm:git:git://github.com/ginco-org/hytale-minigame-framework.git"
+            developerConnection = "scm:git:ssh://github.com/ginco-org/hytale-minigame-framework.git"
+            url = "https://github.com/ginco-org/hytale-minigame-framework"
+        }
+    }
 }
