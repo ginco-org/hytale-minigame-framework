@@ -9,11 +9,11 @@ plugins {
     id("com.google.devtools.ksp") version "2.3.9"
     // Integration tests: `@HytaleTest` methods in src/hytaleTest/ run inside a
     // real Hytale server via the `hytaleTest` task. Published to Maven Central
-    // (gg.ginco.hytest:runtime/:junit5/:gradle-plugin). The 0.1.1 plugin is
-    // supposed to pin the runtime artifacts to its own version, but its
-    // extension still hardcodes "0.1.0" — the explicit 0.1.1 dependencies
-    // further down restore the intended pin.
-    id("gg.ginco.hytest") version "0.1.1"
+    // (gg.ginco.hytest:runtime/:junit5/:gradle-plugin). The plugin pins those
+    // runtime artifacts to its own release (0.1.2 fixed the convention the
+    // 0.1.1 plugin hardcoded at apply() time, breaking consumer bumps —
+    // ginco-org/hytest#2), so the plugin version is the whole knob.
+    id("gg.ginco.hytest") version "0.1.2"
     id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
@@ -63,19 +63,6 @@ hytest {
     // past earlier ceilings (runs 37448282111/37456263862).
     timeoutSeconds = 3600
     firstFrameGraceSeconds = 180
-}
-
-// hytest 0.1.1's Gradle plugin resolves its runtime/junit5 artifacts from a
-// hardcoded "0.1.0" convention — captured into dependency STRINGs at apply()
-// time, before any `hytest { version = ... }` in this script could apply, and
-// dependencyInsight proved that assignment is a no-op for them. Re-declare the
-// artifacts at 0.1.1 on the affected configurations so Gradle's highest-
-// version rule wins everywhere. Drop these when the plugin derives the pin
-// from its own release.
-dependencies {
-    "hytestRuntimePlugin"("gg.ginco.hytest:runtime:0.1.1")
-    "hytaleTestImplementation"("gg.ginco.hytest:runtime:0.1.1")
-    "hytaleTestRuntimeOnly"("gg.ginco.hytest:junit5:0.1.1")
 }
 
 // --- Fast integration subset -------------------------------------------------
