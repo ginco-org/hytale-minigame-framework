@@ -37,16 +37,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # The repo-level "Access: organization" setting does NOT grant
-      # GITHUB_TOKEN git access (it only covers calling actions/reusable
-      # workflows — verified empirically, run 38082397869: checkout 404s).
-      # Until hytest is published to Maven Central and the composite build
-      # goes away, the PAT stays for this checkout.
-      - uses: actions/checkout@v4
-        with:
-          repository: ginco-org/hytest
-          path: hytest
-          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -64,16 +54,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # The repo-level "Access: organization" setting does NOT grant
-      # GITHUB_TOKEN git access (it only covers calling actions/reusable
-      # workflows — verified empirically, run 38082397869: checkout 404s).
-      # Until hytest is published to Maven Central and the composite build
-      # goes away, the PAT stays for this checkout.
-      - uses: actions/checkout@v4
-        with:
-          repository: ginco-org/hytest
-          path: hytest
-          token: ${{ secrets.GH_CHECKOUT_TOKEN }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

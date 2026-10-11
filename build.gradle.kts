@@ -6,8 +6,10 @@ plugins {
     kotlin("jvm") version "2.3.20"
     id("com.google.devtools.ksp") version "2.3.9"
     // Integration tests: `@HytaleTest` methods in src/hytaleTest/ run inside a
-    // real Hytale server via the `hytaleTest` task.
-    id("gg.ginco.hytest")
+    // real Hytale server via the `hytaleTest` task. Published to Maven Central
+    // (gg.ginco.hytest:runtime/:junit5/:gradle-plugin) — the plugin adds the
+    // runtime artifacts itself, pinned to its own version.
+    id("gg.ginco.hytest") version "0.1.0"
 }
 
 group = "gg.ginco"
