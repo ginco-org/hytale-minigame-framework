@@ -9,9 +9,11 @@ plugins {
     id("com.google.devtools.ksp") version "2.3.9"
     // Integration tests: `@HytaleTest` methods in src/hytaleTest/ run inside a
     // real Hytale server via the `hytaleTest` task. Published to Maven Central
-    // (gg.ginco.hytest:runtime/:junit5/:gradle-plugin) — the plugin adds the
-    // runtime artifacts itself, pinned to its own version.
-    id("gg.ginco.hytest") version "0.1.0"
+    // (gg.ginco.hytest:runtime/:junit5/:gradle-plugin). The 0.1.1 plugin is
+    // supposed to pin the runtime artifacts to its own version, but its
+    // extension still hardcodes "0.1.0" — the explicit 0.1.1 dependencies
+    // further down restore the intended pin.
+    id("gg.ginco.hytest") version "0.1.1"
     id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
@@ -50,17 +52,73 @@ hytest {
     // per-test worlds are reclaimed too slowly/lazily, the heap fills near the
     // end of the run and the JVM drops into a GC death spiral (all cores in
     // GC threads, world creation for a late test never completes). 5G holds
-    // the whole 76-test run with margin locally; it also fits GitHub's 7G
+    // the whole run with margin locally; it also fits GitHub's 7G
     // standard runners next to the Gradle daemon.
     jvmArgs = listOf("-Xmx5G", "-Xms1G")
-    // Server-run budget. The default 300s fits a handful of tests; this
-    // suite runs 68 on one server. Per-test lobby teardowns are fast since
-    // hytest@5af8992 (canSaveChunks=false), but instance-world tests still
-    // pay a ~30s removal save each on 2-core CI runners, so the whole run
-    // needs well over 10 min there (runs 37448282111/37456263862 expired
-    // earlier ceilings). A cap, not a delay — local fresh runs take ~80s.
+    // Server-run budget. The default 300s fits a handful of tests; the full
+    // suite runs many more on one server. Keep it generous: it is a CAP, not a
+    // delay — a fresh full suite takes ~80s locally, and the fast subset is
+    // well under that (see the hytaleTest filter below). 0.1.1's teardown fix
+    // removed the per-world chunk-save/-load waits that pushed 2-core runs
+    // past earlier ceilings (runs 37448282111/37456263862).
     timeoutSeconds = 3600
     firstFrameGraceSeconds = 180
+}
+
+// hytest 0.1.1's Gradle plugin resolves its runtime/junit5 artifacts from a
+// hardcoded "0.1.0" convention — captured into dependency STRINGs at apply()
+// time, before any `hytest { version = ... }` in this script could apply, and
+// dependencyInsight proved that assignment is a no-op for them. Re-declare the
+// artifacts at 0.1.1 on the affected configurations so Gradle's highest-
+// version rule wins everywhere. Drop these when the plugin derives the pin
+// from its own release.
+dependencies {
+    "hytestRuntimePlugin"("gg.ginco.hytest:runtime:0.1.1")
+    "hytaleTestImplementation"("gg.ginco.hytest:runtime:0.1.1")
+    "hytaleTestRuntimeOnly"("gg.ginco.hytest:junit5:0.1.1")
+}
+
+// --- Fast integration subset -------------------------------------------------
+// MinigameInstanceWorldTest spawns real instance worlds (one per behavior, two
+// in the multi-create test): each pays create + join + settle + stop + teardown
+// and dominates the wall clock even after hytest 0.1.1's teardown fix. CI
+// passes -PhytestFast to skip the whole class in main-branch integration runs
+// and keep the always-on signal quick; nightly and explicit full-suite runs
+// (workflow_dispatch, or a plain `hytaleTest` invocation) run everything.
+// Everything else (definitions, behaviors, lifecycle, teams/parties/spawn/
+// stats/...) costs seconds in total, so the fast tier is the only tier a
+// 2-core runner needs per commit.
+//
+// Two things get gated, and they must stay consistent, because hytest
+// discovers tests TWICE and runs the SERVER's list:
+//
+// 1. The merged Hytest.jar (what the SERVER runs): inside the server, the
+//    plugin's own ClasspathTestScanner scans the jar it was loaded from and
+//    runs every @HytaleTest method it finds — nothing the Gradle side says
+//    can stop that scan. So the fast tier excludes the class from the merged
+//    jar's content (measured locally: "run starting: 69 discovered test(s)"
+//    without the 3 instance tests, all green).
+// 2. The Gradle/worker side (what the JUnit launcher reports): hytest's engine
+//    ignores EngineDiscoveryRequest selectors, but Gradle applies the Test
+//    task's name filter as a launcher post-discovery filter and prunes the
+//    descriptor tree — verified on Gradle 9.5.1 against a same-shaped engine
+//    (descriptors need ClassSource/MethodSource; HytestEngine's carry both).
+//    Without this the worker would still discover tests the server does not
+//    run, and the surplus expectation surfaces as engine-level
+//    unknown-failures.
+
+val hytestFastSuite = providers.gradleProperty("hytestFast").isPresent
+
+if (hytestFastSuite) {
+    tasks.named<org.gradle.api.tasks.bundling.Jar>("createHytaleTestPlugin") {
+        exclude("**/MinigameInstanceWorldTest*.class")
+    }
+}
+
+tasks.named<Test>("hytaleTest") {
+    if (hytestFastSuite) {
+        filter { excludeTestsMatching("*.MinigameInstanceWorldTest.*") }
+    }
 }
 
 // --- Maven Central publication (thin API artifact) ---------------------------

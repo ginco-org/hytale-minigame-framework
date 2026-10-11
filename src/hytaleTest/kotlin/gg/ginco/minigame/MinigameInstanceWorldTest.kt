@@ -36,6 +36,17 @@ import gg.ginco.minigame.util.Teams
  *
  * Every read of an instance world goes through [Instances.runOnWorld]: a store
  * asserts its own thread, and the test body runs on the harness's world.
+ *
+ * ## Why the specs under test are batched into one lifecycle walkthrough
+ *
+ * Each instance world pays create + join + settle + stop + teardown (plus the
+ * builtin's asynchronous removal), measured as ~30–60s per test on 2-core CI
+ * runners — the whole earlier suite spent 5 worlds on behaviors that are
+ * checkpoints of ONE lifecycle (issue #1's timing analysis). Tests here
+ * therefore walk Waiting → membership → Playing → stop/return inside a single
+ * shared world instead of spawning one world per facet. The tests stay
+ * revertible one-per-facet (`@HytaleTest` worlds are fresh per test) — that is
+ * the trade-off of batching, and this comment is where the decision lives.
  */
 class MinigameInstanceWorldTest {
 
@@ -43,6 +54,9 @@ class MinigameInstanceWorldTest {
     private var gameTypeId: String? = null
     private var world: World? = null
     private var next = 0
+
+    /** The admin who created the current test's instance; stays in the lobby (see [setupInstance]). */
+    private var creator: SimulatedPlayer? = null
 
     /**
      * Each test gets a UNIQUE asset name, instance id and asset pack.
@@ -65,9 +79,11 @@ class MinigameInstanceWorldTest {
             MinigameDefinition(gameTypeId = gameTypeId!!, instanceAsset = unique,
                 teams = teams.map { TeamDefinition(name = it) }))
 
-        // The admin teleports in and STAYS: this is the world every instance
-        // assertion below is made against.
+        // The admin runs create FROM THE LOBBY and stays there — the instance
+        // world is a separate place, which is exactly what the tests assert. The
+        // handle is kept for commands the lobby is the right caller for (stop).
         val alice = player(t)
+        creator = alice
         alice.runCommand("minigame create ${gameTypeId!!}").join()
         val created = awaitInstanceWorld(t, unique)
         world = created
@@ -90,6 +106,7 @@ class MinigameInstanceWorldTest {
                 .onFailure { System.err.println("[hytest] instance world '$assetName' still loaded after cleanup wait") }
         }
         world = null
+        creator = null
         gameTypeId?.let { id -> runCatching { DefinitionStore.remove(id) } }
         gameTypeId = null
         asset?.let { a -> runCatching { MinigameTestHarness.removeAssetPack(a) } }
@@ -128,16 +145,34 @@ class MinigameInstanceWorldTest {
     }
 
     /**
-     * `create` for a definition that names an instance asset spawns that asset's
-     * world and builds the controller — and its teams — inside it, not in the
-     * world the admin ran the command from.
+     * ONE instance world walks the whole lifecycle, asserting every facet in
+     * sequence: create spawns the world (its controller, teams and Waiting
+     * phase) and leaves the lobby empty; join teleports the player in and
+     * applies the full membership on arrival; the world's own `PhaseSystem`
+     * drives Countdown into Playing; `stop` sends the joined player back to
+     * the lobby — membership stripped — and the builtin's `RemovalSystem` reaps
+     * the world.
+     *
+     * `stop` is run by the creating admin from the LOBBY, naming the asset:
+     * that exercises the long path — ENDING phase, later reaped by
+     * [gg.ginco.minigame.system.PhaseSystem] cleanup via the same
+     * [Instances.endInstance] API a direct call would use — rather than a
+     * caller inside the instance world, for whom `stop` is the short
+     * direct-teardown path.
+     *
+     * Each step waits with a short explicit budget (the steps themselves settle
+     * in ~0.1–5s; 30s is a slow-runner cap, not a delay), and phase/membership
+     * reads batch everything they need into a single
+     * [Instances.runOnWorld] hop per poll instead of two.
      */
-    @HytaleTest(timeoutSeconds = 120)
-    fun createSpawnsInstanceWorldWithControllerAndTeams(t: HytaleTestHelper) {
+    @HytaleTest(timeoutSeconds = 180)
+    fun instanceWorldLifecycleRunsInItsOwnWorld(t: HytaleTestHelper) {
         try {
-            val world = setupInstance(t, "arena", listOf("red", "blue"))
+            val lobby = t.world
+            val world = setupInstance(t, "walk", listOf("red", "blue"))
             val gameType = gameTypeId!!
 
+            // --- create: the world is the instance ---------------------------
             t.assertTrue(world.name.startsWith("instance-"),
                 "instance world should carry the builtin's name prefix, got '${world.name}'")
             t.assertTrue(world.name.contains(assetName),
@@ -147,11 +182,10 @@ class MinigameInstanceWorldTest {
             // The lobby must NOT hold the controller: that is the point of
             // running the instance in its own world.
             t.runOnWorld {
-                val lobbyControllers = MinigameTestHarness.controllers(MinigameTestHarness.storeOf(t.world))
+                val lobbyControllers = MinigameTestHarness.controllers(MinigameTestHarness.storeOf(lobby))
                 t.assertTrue(lobbyControllers.isEmpty(),
                     "the lobby must not hold the instance's controller, found $lobbyControllers")
             }
-
             onInstanceWorld(world) {
                 val store = world.entityStore.store
                 val controller = Instances.findController(world, gameType)
@@ -165,6 +199,89 @@ class MinigameInstanceWorldTest {
                 t.assertEquals(listOf("red", "blue"), Teams.of(store, ref).map { it.data.name },
                     "the definition's teams should be spawned in the instance world")
             }
+
+            // --- join: one hop in, membership applied on arrival --------------
+            val bob = player(t, "Bob")
+            bob.runCommand("minigame join --asset=$assetName --team=red").join()
+
+            // The hop is applied by the builtin's teleport tick, so wait for the
+            // arrival rather than sleeping.
+            t.assertEventually(30) {
+                val ref = bob.ref().reference
+                t.assertNotNull(ref, "player should still be in a world mid-teleport")
+                t.assertEquals(world.entityStore.store, ref!!.store,
+                    "player should have landed in the instance world '${world.name}'")
+            }
+
+            // Refs cannot cross stores: the membership is read — and the
+            // controller identity compared — inside the instance world, in ONE
+            // hop per poll. Arrival and the membership write are separate ticks
+            // (InstanceEntrySystem applies InMinigame/Role/TeamRef on its tick
+            // after the entity lands, as three sequential component writes), so
+            // poll for the COMPLETE membership instead of snapshotting the
+            // moment arrival is detected — a read between the writes sees a
+            // half-applied state.
+            var membership: MembershipSnapshot? = null
+            t.assertEventually(30) {
+                membership = onInstanceWorld(world) {
+                    val store = world.entityStore.store
+                    val ref = bob.ref().reference!!
+                    MembershipSnapshot(
+                        MinigameTestHarness.inMinigameOf(store, ref)?.controllerRef,
+                        MinigameTestHarness.roleOf(store, ref),
+                        store.getComponent(ref, gg.ginco.minigame.component.TeamRef.componentType)?.teamRef
+                            ?.let { store.getComponent(it, gg.ginco.minigame.component.TeamData.componentType)?.name },
+                        Instances.findController(world, gameType),
+                    )
+                }
+                t.assertNotNull(membership.linkedController,
+                    "the joined player should be linked into the instance on arrival")
+                t.assertEquals(membership.worldController, membership.linkedController,
+                    "the membership should link to the instance world's own controller")
+                t.assertEquals(Role.participant(), membership.role,
+                    "player should be a participant in the instance world")
+                t.assertEquals("red", membership.teamName,
+                    "the roster holds uuids, so the player should be linked to their team on arrival")
+            }
+
+            // --- start: the world's own PhaseSystem advances the phase --------
+            // Start is run FROM THE LOBBY (by the creator). A caller inside the
+            // instance world would deadlock: StartCommand's asset path hops to
+            // each matching instance world's thread via Instances.runOnWorld,
+            // and the world's single-thread executor cannot run that hop while
+            // it is running the command itself — it self-enqueues and blocks
+            // (measured locally: the walk body then never completed and, since
+            // hytest's body executor is single-threaded, every later test's
+            // body queued behind the blocked first body and timed out in
+            // cascade).
+            creator!!.runCommand("minigame start --asset=$assetName --seconds=1").join()
+
+            t.assertEventually(30) {
+                val phase = onInstanceWorld(world) {
+                    val store = world.entityStore.store
+                    MinigameTestHarness.phaseOf(store, Instances.findController(world, gameType)!!)
+                }
+                t.assertEquals(Phase.Kind.PLAYING, phase?.kind,
+                    "the instance world's own PhaseSystem should advance the phase, got $phase")
+            }
+
+            // --- stop: players go home, membership does not follow, world reaps
+            val worldName = world.name
+            creator!!.runCommand("minigame stop --asset=$assetName").join()
+            // Already being dismantled — stop cleanup from re-ending it. The
+            // reap wait below names the world, not this stale reference.
+            this.world = null
+
+            t.assertEventually(30) {
+                t.assertEquals(lobby.entityStore.store, bob.ref().reference?.store,
+                    "the joined player should be back in their lobby world after the instance ends")
+            }
+            t.runOnWorld {
+                val ref = bob.ref().reference
+                t.assertTrue(ref != null && MinigameTestHarness.inMinigameOf(MinigameTestHarness.storeOf(lobby), ref) == null,
+                    "membership must not follow the player back into the lobby")
+            }
+            awaitWorldGone(t, worldName)
             t.succeed()
         } finally {
             cleanup()
@@ -177,8 +294,12 @@ class MinigameInstanceWorldTest {
         try {
             val first = setupInstance(t, "duel")
 
-            val alice = player(t, "Bob")
-            alice.runCommand("minigame create ${gameTypeId!!}").join()
+            // A create every time SPAWNS: there is no create-or-join — whoever
+            // runs it, wherever, a second create for the same game type opens a
+            // second copy of the asset's world. The spawn doubles as the counter
+            // test to an implementation caching one world per asset name.
+            val secondAdmin = player(t, "Bob")
+            secondAdmin.runCommand("minigame create ${gameTypeId!!}").join()
 
             var names: List<String> = emptyList()
             t.assertEventually(60) {
@@ -188,6 +309,22 @@ class MinigameInstanceWorldTest {
             }
             t.assertTrue(names.contains(first.name) && names.any { it != first.name },
                 "both worlds must be live and distinct, got $names")
+
+            // Release BOTH spawned instances through the public stop path before
+            // the generic cleanup runs: an asset-named stop ends every instance
+            // of this test's asset, and each world is empty, so the builtin
+            // reaps both immediately. Release-together matters here — stopping
+            // only the first (cleanup's direct endInstance) would leave the
+            // second world loaded and spin the cleanup wait until its
+            // best-effort budget (that was the whole 60s of the old
+            // eachCreate!). The generic cleanup is told the world is already
+            // gone by nulling it, so it removes only definition + assets.
+            creator!!.runCommand("minigame stop --asset=$assetName").join()
+            this.world = null
+            t.assertEventually(30) {
+                t.assertEquals(null, MinigameTestHarness.instanceWorldOf(assetName),
+                    "no instance world of '$assetName' should remain after stopping both instances")
+            }
             t.succeed()
         } finally {
             cleanup()
@@ -223,154 +360,20 @@ class MinigameInstanceWorldTest {
     }
 
     /**
-     * Join teleports the player into the instance world and the membership is
-     * applied *there* — the join is finished on arrival, inside that world's
-     * store, because the controller is not readable anywhere else.
+     * Snapshot of a player's membership, safe to carry off the world thread.
+     *
+     * Declared INSIDE the test class on purpose: the fast-suite gate excludes
+     * the class file from the merged Hytest.jar (and every other class file it
+     * names), and a top-level private data class would compile to its own
+     * `MembershipSnapshot.class` that a pattern on the test class does not
+     * cover.
      */
-    @HytaleTest(timeoutSeconds = 180)
-    fun joinTeleportsPlayerAndAppliesMembership(t: HytaleTestHelper) {
-        try {
-            val world = setupInstance(t, "ctf", listOf("red"))
-
-            val alice = player(t, "Bob")
-            alice.runCommand("minigame join --asset=$assetName --team=red").join()
-
-            // The hop is applied by the builtin's teleport tick, so wait for the
-            // arrival rather than sleeping.
-            t.assertEventually(60) {
-                val ref = alice.ref().reference
-                t.assertNotNull(ref, "player should still be in a world mid-teleport")
-                t.assertEquals(world.entityStore.store, ref!!.store,
-                    "player should have landed in the instance world '${world.name}'")
-            }
-
-            // Refs cannot cross stores: everything is read, and the controller
-            // identity compared, inside the instance world. Arrival and the
-            // membership write are separate ticks (InstanceEntrySystem applies
-            // InMinigame/Role/TeamRef on its tick after the entity lands, as
-            // three sequential component writes), so poll for the COMPLETE
-            // membership instead of snapshotting the moment arrival is
-            // detected — a read between the writes sees a half-applied state.
-            val controller = onInstanceWorld(world) { Instances.findController(world, gameTypeId!!) }
-            t.assertNotNull(controller, "the instance world should hold a controller")
-
-            var membership: MembershipSnapshot? = null
-            t.assertEventually(60) {
-                membership = onInstanceWorld(world) {
-                    val store = world.entityStore.store
-                    val ref = alice.ref().reference!!
-                    val inMinigame = MinigameTestHarness.inMinigameOf(store, ref)
-                    val teamRef = store.getComponent(ref, gg.ginco.minigame.component.TeamRef.componentType)?.teamRef
-                    MembershipSnapshot(
-                        inMinigame?.controllerRef,
-                        MinigameTestHarness.roleOf(store, ref),
-                        teamRef?.let {
-                            store.getComponent(it, gg.ginco.minigame.component.TeamData.componentType)?.name
-                        },
-                    )
-                }
-                t.assertEquals(controller, membership.controllerRef,
-                    "the membership should link to the instance world's own controller")
-                t.assertEquals(Role.participant(), membership.role,
-                    "player should be a participant in the instance world")
-                t.assertEquals("red", membership.teamName,
-                    "the roster holds uuids, so the player should be linked to their team on arrival")
-            }
-            t.succeed()
-        } finally {
-            cleanup()
-        }
-    }
-
-    /**
-     * Phase transitions run inside the instance world: its own `PhaseSystem`
-     * ticks its own controller from countdown into playing.
-     */
-    @HytaleTest(timeoutSeconds = 180)
-    fun phaseTransitionsRunInTheInstanceWorld(t: HytaleTestHelper) {
-        try {
-            val world = setupInstance(t, "race")
-
-            val alice = player(t, "Bob")
-            alice.runCommand("minigame start --asset=$assetName --seconds=1").join()
-
-            t.assertEventually(60) {
-                val controller = onInstanceWorld(world) { Instances.findController(world, gameTypeId!!) }
-                t.assertNotNull(controller, "controller should still exist")
-                val phase = onInstanceWorld(world) {
-                    MinigameTestHarness.phaseOf(world.entityStore.store, controller!!)
-                }
-                t.assertEquals(Phase.Kind.PLAYING, phase?.kind,
-                    "the instance world's own PhaseSystem should advance the phase, got $phase")
-            }
-            t.succeed()
-        } finally {
-            cleanup()
-        }
-    }
-
-    /** Stop tears the instance world down; the builtin's RemovalSystem reaps it. */
-    @HytaleTest(timeoutSeconds = 180)
-    fun stopRemovesTheInstanceWorld(t: HytaleTestHelper) {
-        try {
-            val world = setupInstance(t, "quick")
-
-            val alice = player(t, "Bob")
-            alice.runCommand("minigame stop --asset=$assetName").join()
-
-            t.assertEventually(60) {
-                t.assertEquals(null, MinigameTestHarness.instanceWorldOf(assetName),
-                    "no instance world for '$assetName' should remain")
-            }
-            // Already gone — stop cleanup from re-ending it.
-            this.world = null
-            t.succeed()
-        } finally {
-            cleanup()
-        }
-    }
-
-    /**
-     * Ending an instance returns a joined player to the lobby they came from and
-     * takes their membership with them.
-     */
-    @HytaleTest(timeoutSeconds = 180)
-    fun endInstanceReturnsJoinedPlayerToTheLobby(t: HytaleTestHelper) {
-        try {
-            val world = setupInstance(t, "return")
-            val lobby = t.world
-
-            val alice = player(t, "Bob")
-            alice.runCommand("minigame join --asset=$assetName").join()
-            // Arrival and the membership write are separate ticks: wait for the
-            // link too, so "a joined player" means fully joined.
-            t.assertEventually(60) {
-                t.assertEquals(world.entityStore.store, alice.ref().reference?.store,
-                    "player should be in the instance world before it ends")
-                val linked = onInstanceWorld(world) {
-                    MinigameTestHarness.inMinigameOf(world.entityStore.store, alice.ref().reference!!)
-                }
-                t.assertNotNull(linked, "player should be linked into the instance before it ends")
-            }
-            val controller = onInstanceWorld(world) { Instances.findController(world, gameTypeId!!)!! }
-            onInstanceWorld(world) { Instances.endInstance(world, controller) }
-
-            t.assertEventually(60) {
-                t.assertEquals(lobby.entityStore.store, alice.ref().reference?.store,
-                    "player should be back in their lobby world after the instance ends")
-            }
-            awaitWorldGone(t, world.name)
-            this.world = null
-            t.succeed()
-        } finally {
-            cleanup()
-        }
-    }
+    private data class MembershipSnapshot(
+        /** The controller the player's InMinigame link names, or null. */
+        val linkedController: Ref<EntityStore>?,
+        val role: Role?,
+        val teamName: String?,
+        /** The controller the polled world holds for this game type, or null. */
+        val worldController: Ref<EntityStore>?,
+    )
 }
-
-/** Snapshot of a player's membership, safe to carry off the world thread. */
-private data class MembershipSnapshot(
-    val controllerRef: Ref<EntityStore>?,
-    val role: Role?,
-    val teamName: String?,
-)

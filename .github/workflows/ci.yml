@@ -4,29 +4,52 @@
 # account needed. `integration` boots a real server and runs the suite, which
 # needs a cached Hytale `auth:server` token (repository secret
 # HYTALE_TOKEN_JSON, written to the path hytest's GameSession reads) — so it
-# only does real work on main pushes and manual dispatch.
+# only does real work on main pushes, nightly schedules and manual dispatch.
 #
-# The integration tests consume hytest as a composite build from a SIBLING
-# checkout (../hytest) — both repositories are checked out side by side here.
+# Suite split (issue #1): `MinigameInstanceWorldTest` alone spent ~227s of a
+# ~460s test phase — every instance world pays create + join + settle + stop +
+# teardown, by design. The fast tier (`-PhytestFast`, see build.gradle.kts)
+# excludes the whole class, so main-branch integration gives its signal in
+# minutes, not tens of minutes. The nightly schedule and explicit dispatches
+# (`suite: full`) run the complete suite on a real server, which is where a
+# multi-minute-per-test cost can be paid deliberately.
+#
+# Two servers on a bigger runner (issue #1, suggestion 5) is deliberately
+# NOT implemented: the engine boots one ephemeral server per `hytaleTest`
+# invocation and the runner is 2-core, so a second invocation's server shares
+# cores with the first and total wall time does not improve.
+#
+# Each integration run consumes hytest as plain dependencies from Maven Central
+# (no composite build, no PAT since hytale-minigame-framework@b11491b).
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # 03:40 UTC daily — the full suite (fast tier keeps main-push runs short;
+    # nightly is the place where minute-per-test wall time is acceptable).
+    - cron: '40 3 * * *'
   workflow_dispatch:
+    inputs:
+      suite:
+        description: 'hytaleTest scope'
+        required: false
+        type: choice
+        default: fast
+        options: [fast, full]
 
 permissions:
   contents: read
 
 # The Hytale refresh token is use-once rotated (see hytest's ci.yml rationale):
 # serialize integration runs and carry the rotated token forward via the cache.
-# Per-ref: a new push cancels the superseded run of the same branch — the
-# integration suite costs ~30 min on a 2-core runner (world-disposal pipeline:
-# 5s chunk-load timeout + ~25s chunk save per per-test world), so don't burn
-# runners on stale commits. Run the suite locally instead: ~1 min end to end.
-# The Hytale refresh-token rotation stays safe: integration only runs on
-# main/dispatch, and warm server-cache runs never touch the OAuth token.
+# Per-ref: a new push cancels the superseded run of the same branch — do not
+# burn runners on stale commits. The Hytale refresh-token rotation stays safe:
+# integration only runs on main/dispatch/schedule, and warm server-cache runs
+# never touch the OAuth token. A pushed main commit cancels an in-flight
+# nightly run and takes over the same rotation chain cleanly.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -46,10 +69,11 @@ jobs:
         run: ./gradlew compileKotlin jar --no-build-cache
 
   integration:
-    name: Integration (suite on a real server)
+    name: Integration (real server)
     needs: build
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
@@ -114,12 +138,26 @@ jobs:
           else
             echo "token.json restored from cache — keeping the latest rotated token"
           fi
+      # Nightly and explicit `suite: full` dispatches run the complete suite;
+      # main pushes run the fast tier (instance-world tests excluded, see
+      # build.gradle.kts) so the always-on signal stays minutes instead of
+      # tens of minutes long.
+      - name: Determine suite scope
+        id: suite
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.suite }}" = "full" ]; then
+            echo "flag=" >> "$GITHUB_OUTPUT"
+            echo "scope=full" >> "$GITHUB_OUTPUT"
+          else
+            echo "flag=-PhytestFast" >> "$GITHUB_OUTPUT"
+            echo "scope=fast (instance-world tests excluded)" >> "$GITHUB_OUTPUT"
+          fi
       - name: Run integration suite
         if: steps.token.outputs.available == 'true'
-        # The server JVM now needs a 5G heap (the suite outgrew hytest's 4G
-        # default at ~75 tests — see build.gradle.kts), and ubuntu-latest
-        # runners have 7G: cap the Gradle daemon so daemon + test worker +
-        # server fit. The daemon is idle while the server runs.
+        # The server JVM needs a 5G heap (the suite outgrew hytest's 4G default
+        # at ~75 tests — see build.gradle.kts), and ubuntu-latest runners have
+        # 7G: cap the Gradle daemon so daemon + test worker + server fit. The
+        # daemon is idle while the server runs.
         env:
           GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx1g
-        run: ./gradlew hytaleTest -PhytestLogs --no-build-cache --refresh-dependencies
+        run: ./gradlew hytaleTest ${{ steps.suite.outputs.flag }} -PhytestLogs --no-build-cache --refresh-dependencies

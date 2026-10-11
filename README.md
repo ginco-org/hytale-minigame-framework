@@ -164,7 +164,7 @@ Lifetime stats: when an instance's game ends, its counters and per-player
 counters merge additively into a per-game-type ledger
 (`<dataDir>/stats/<gameTypeId>.json`) — read it via
 `LifetimeStats.load(gameTypeId)`. Atomic writes; merge is additive.
-- Integration tests: 68 `@HytaleTest` methods run inside a real server
+- Integration tests: 72 `@HytaleTest` methods run inside a real server
   via [hytest](https://github.com/ginco-org/hytest) (`./gradlew hytaleTest`);
   hytest loads the real plugin from the merged test jar (SubPlugins manifest),
   so nothing about the framework is stubbed or re-mounted in the harness.
@@ -183,18 +183,17 @@ and untargeted instance commands, and command response text assertions.
 ## Testing
 
 Integration tests run inside a real, authenticated Hytale server (0.6.8) via the
-[`hytest`](../hytest) harness, consumed as a local composite build — mirroring
-hytest's own `example/`:
-
-- `settings.gradle.kts` `includeBuild`s the local hytest checkout (`~/projects/hytest`)
-  and pins `gg.ginco.hygradle.settings` to 0.5.0 (which provides `provisionServer`).
-- `build.gradle.kts` applies `gg.ginco.hytest` and `gg.ginco.hygradle`; tests live in
-  the `hytaleTest` source set (`src/hytaleTest/kotlin`).
+[`hytest`](https://github.com/ginco-org/hytest) harness, consumed from Maven
+Central (`gg.ginco.hytest:<gradle-plugin|runtime|junit5>`): `settings.gradle.kts`
+resolves the plugin via `mavenCentral()`, `build.gradle.kts` applies
+`gg.ginco.hytest` (plus `gg.ginco.hygradle` for server provisioning); tests
+live in the `hytaleTest` source set (`src/hytaleTest/kotlin`).
 
 Run them with:
 
 ```sh
 ./gradlew hytaleTest              # boots the server, runs every @HytaleTest
+./gradlew -PhytestFast hytaleTest # fast tier: exclude the instance-world suite
 ./gradlew -PhytestLogs hytaleTest # forward server stdout into the build log
 ./gradlew hytaleTest --tests 'gg.ginco.minigame.MinigameLifecycleTest.createPutsInstanceInWaiting'
 ```
@@ -202,6 +201,27 @@ Run them with:
 The first run provisions the authenticated server build into
 `~/.gradle/caches/hygradle/server/` (non-interactive while the OAuth token cache
 in `~/.local/share/hygradle/token.json` is valid).
+
+### Suite tiers
+
+`MinigameInstanceWorldTest` is the expensive tier: every instance world pays
+create + join + settle + stop + teardown, and issue #1's timing analysis
+measured ~30–60s per test there — the suite's wall clock. Two tiers off the
+same test sources:
+
+- **Fast** (`-PhytestFast`): everything except `MinigameInstanceWorldTest` —
+  definitions, behaviors, lifecycle, teams, parties, spawn, stats, regions,
+  disconnects. CI runs this tier on every main push.
+- **Full** (no flag): the complete suite including instance worlds; the CI
+  nightly schedule and `suite: full` dispatches run it. The instance tier is
+  itself batched — one lifecycle walkthrough world plus a two-world
+  multi-create test — so the full suite keeps the world count (and with it the
+  per-world teardown tax) at 3, not the earlier 6.
+
+The split is a Gradle Test-task name filter (see `build.gradle.kts`): hytest's
+custom JUnit engine ignores engine discovery selectors, but Gradle applies the
+patterns as a launcher post-discovery filter, pruning the descriptor tree, so
+only the fast subset is ever dispatched to the server.
 
 Notes:
 
