@@ -123,9 +123,26 @@ object MinigameTestHarness {
         // completes — the world thread stalls >30s and starves the player
         // return (CI run 37456263862: two instance tests failed on 2-core
         // runners). The removal-time chunk save stays as teardown cost here.
+        //
+        // Two knobs copied from hytest 0.1.1's TestWorldFactory, for the same
+        // reason: these instance worlds are void test artifacts whose queued
+        // loads are pure teardown tax. The default world-map provider runs
+        // ChunkTracker scans at world init and on every join (every test join,
+        // spawn or return queues loads); DisabledWorldMapProvider removes them
+        // at the source — no simulated player renders a map. And the default
+        // pregenerate region (±512 blocks = 81 queued chunk loads per world)
+        // only matters for the "Waiting for loading chunks..." drain world
+        // removal does against a ~5s budget; WorldPregenerateSystem skips
+        // itself when the region is null. Neither knob affects anything a suite
+        // test asserts (membership, phases, teams, regions), and keepLoadedRegion
+        // is deliberately left at the default — an empty one breaks player
+        // placement (bisected in hytest).
+        val config = com.hypixel.hytale.server.core.universe.world.WorldConfig().apply {
+            worldMapProvider = com.hypixel.hytale.server.core.universe.world.worldmap.provider.DisabledWorldMapProvider()
+            getChunkConfig().setPregenerateRegion(null)
+        }
         com.hypixel.hytale.server.core.universe.world.WorldConfig
-            .save(assetDir.resolve("instance.bson"),
-                com.hypixel.hytale.server.core.universe.world.WorldConfig()).join()
+            .save(assetDir.resolve("instance.bson"), config).join()
         val packId = "gg.ginco:MinigameTestAssets-" + name
         com.hypixel.hytale.server.core.asset.AssetModule.get().registerPack(
             packId, root, com.hypixel.hytale.common.plugin.PluginManifest(),
@@ -164,11 +181,14 @@ object MinigameTestHarness {
      * longer loaded — i.e. the server finished removing it.
      *
      * Tests end their instances in `finally`, but the builtin reaps the world
-     * asynchronously and the server's removal pipeline then saves its chunks
-     * — ~30s per world on 2-core CI runners. Letting that overlap the next
-     * test starves its instance work (phase transfers time out mid-assert;
-     * CI run 37458914071). Serializing on the reap costs ~30s per instance
-     * test there, and nothing locally (the reap is sub-second).
+     * asynchronously and the server's removal pipeline then saves its chunks.
+     * Serializing on the reap keeps a next test from starting while the last
+     * one's world is still going down — overlapping used to starve its
+     * instance work (phase transfers timed out mid-assert; CI run 37458914071).
+     * Since hytest 0.1.1 (disabled map provider + no pregenerate for the
+     * instance template — see [createInstanceAsset]) the queued-chunk-load
+     * drain is empty, so the wait is normally sub-second and never its best-
+     * effort budget; keep the budget as the 2-core slow-runner backstop.
      *
      * Returns false when the world was still loaded at the deadline: the
      * caller decides whether that matters (test teardown treats it as best
