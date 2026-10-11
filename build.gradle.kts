@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "gg.ginco"
-version = "0.1.0"
+version = "0.1.1"
 
 dependencies {
     // api (not implementation) so the published POM exposes codec as a
@@ -72,7 +72,13 @@ hytest {
 // stays compileOnly and is deliberately absent — consumers declare it
 // themselves against maven.hytale.com, like every Hytale plugin build).
 val thinJar = tasks.register<Jar>("thinJar") {
-    archiveClassifier.set("thin")
+    // Unclassified: the publication maps component artifacts by classifier, so
+    // a classified artifact lands as <artifact>-<version>-thin.jar and leaves
+    // the MAIN artifact slot empty (0.1.0 shipped exactly that bug — only POM,
+    // sources and javadoc are usable there). The unclassified thin jar collides
+    // with the fat jar's filename locally, so it writes to its own directory.
+    archiveClassifier.set("")
+    destinationDirectory.set(layout.buildDirectory.dir("thinLibs"))
     from(sourceSets.main.get().output)
 }
 
