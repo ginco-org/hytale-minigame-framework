@@ -180,6 +180,61 @@ and untargeted instance commands, and command response text assertions.
 - disconnect/leave handling beyond `/minigame leave`
 
 
+## Packaging: one framework per server
+
+The framework ships as two artifacts per `v*` tag:
+
+| Artifact | Made for | Where |
+|---|---|---|
+| **Thin jar** (`gg.ginco:hytale-minigame-framework`) | minigame plugin *builds* | Maven Central |
+| **Fat plugin jar** (`hytale-minigame-framework-x.y.z.jar`) | server operators | GitHub Releases |
+
+Each plugin jar gets its **own `PluginClassLoader`** — whatever a plugin
+bundles is *private to it*. So minigame plugins must NOT bundle the
+framework: two games each carrying a copy would mean two frameworks with
+split static state (separate registries, instance ids, stats) and
+duplicate `/minigame` commands. The framework must exist **once per
+server**, installed in `mods/` from its GitHub Release jar.
+
+Cross-plugin class access works through the server's plugin bridge
+(`PluginBridgeClassLoader`): when a class isn't in the plugin's own jar or
+the server classpath, the bridge searches **declared hard dependencies
+first**, then optional ones, then everything else (see
+`PluginManager.java` in the shared source).
+
+A minigame plugin therefore:
+
+```kotlin
+repositories {
+    mavenCentral()
+    maven("https://maven.hytale.com/release")
+}
+dependencies {
+    implementation("gg.ginco:hytale-minigame-framework:0.1.1")   // compile-time
+    compileOnly("com.hypixel.hytale:Server:0.6.8")               // server API
+}
+hytale {
+    depends("gg.ginco:MinigameFramework", ">=0.1")               // runtime
+    bundleDependencies = false
+}
+```
+
+- `depends(...)` makes the server refuse to load the game when the
+  framework plugin isn't installed, and guarantees load order (the
+  framework enables and starts first).
+- kotlin-stdlib and hytale-codec needed by the game resolve from the
+  framework's loader via the bridge too — no bundling needed for any of
+  it. (Caveat: bridge resolution checks the **server classpath before**
+  the bridge, so if the server itself ever ships a different
+  kotlin-stdlib version, plugins bind to that one first.)
+- `hytale { subPlugin { ... } }` with `bundleDependencies = true` remains
+  a legitimate layout for **single-game servers** (the whole stack in one
+  jar, no operator install step) — but never mix it with a second game
+  plugin doing the same. Verified both layouts on real 0.6.8 servers.
+
+A real two-plugin boot (framework thin-consumer) is documented in
+`save-the-kweebecs`' README.
+
 ## Testing
 
 Integration tests run inside a real, authenticated Hytale server (0.6.8) via the
