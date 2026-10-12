@@ -29,8 +29,8 @@ dependencies {
     ksp("gg.ginco:hytale-codec-processor:1.2.1")
 }
 
-// bundleDependencies packs several jars together (kotlinx-serialization is
-// multi-release): duplicate module-info/class entries are expected and must
+// bundleDependencies packs several jars together, some of them
+// multi-release: duplicate module-info/class entries are expected and must
 // be excluded rather than failing the jar task.
 tasks.named<org.gradle.api.tasks.bundling.Jar>("jar") {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
