@@ -93,15 +93,20 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
-      # Rotation chain: restore the LATEST cached token, save the rotated one
-      # at job end (see hytest's ci.yml for the full rationale).
-      - name: Restore Hytale token
+      # Rotation chain: restore the LATEST cached credential, save the rotated
+      # one at job end (see hytest's ci.yml for the full rationale). v2: the
+      # prior chain broke — a cached refresh credential was rejected ~30 min
+      # after its run saved it (both follow-up runs fell into the interactive
+      # device prompt and hung). Bumping the key version makes the seed step
+      # re-freshen from HYTALE_TOKEN_JSON until the chain behavior is
+      # understood.
+      - name: Restore Hytale downloader credential
         uses: actions/cache@v4
         with:
-          path: ~/.local/share/hygradle/token.json
-          key: hytale-downloader-token-${{ github.run_id }}
+          path: ~/.local/share/hygradle
+          key: hytale-downloader-credential-v2-${{ github.run_id }}
           restore-keys: |
-            hytale-downloader-token-
+            hytale-downloader-credential-v2-
       # Server files (jar 110MB + Assets.zip 3.3GB) cached by version — the
       # authenticated R2 download only happens on version bump or cold cache.
       - name: Restore Hytale server files
