@@ -1,4 +1,5 @@
 import org.gradle.api.file.DuplicatesStrategy
+import java.nio.file.Path
 import org.gradle.api.Task
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
 plugins {
@@ -13,12 +14,12 @@ plugins {
     // runtime artifacts to its own release (0.1.2 fixed the convention the
     // 0.1.1 plugin hardcoded at apply() time, breaking consumer bumps —
     // ginco-org/hytest#2), so the plugin version is the whole knob.
-    id("gg.ginco.hytest") version "0.1.2"
+    id("gg.ginco.hytest") version "0.2.0"
     id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
 group = "gg.ginco"
-version = "0.1.1"
+version = "0.2.0"
 
 dependencies {
     // api (not implementation) so the published POM exposes codec as a
@@ -37,17 +38,47 @@ tasks.named<org.gradle.api.tasks.bundling.Jar>("jar") {
 }
 
 hytale {
+    // kotlin-for-hytale is the server's single Kotlin runtime (see README
+    // "Packaging"); our manifest demands it so the server refuses us when
+    // the carrier is missing — and load order guarantees the runtime.
+    depends("gg.ginco:KotlinForHytale", ">=0.1")
     group = "gg.ginco"
     bundleDependencies = true
     name = "MinigameFramework"
     description = "Minigame framework for Hytale"
     serverVersion = "0.6.8"
     mainClass = "gg.ginco.minigame.Plugin"
+    // The carrier (kotlin-for-hytale) owns the Kotlin runtime server-wide;
+    // bundling our own would fork the runtime identity per loader. Codec
+    // MUST stay bundled: we cannot resolve our own codec classes from the
+    // bridge — nobody else carries them.
+    bundleExclude("org.jetbrains.kotlin:kotlin-stdlib")
+}
+
+// The suite's test server must carry the Kotlin carrier plugin (our manifest
+// hard-depends on it). CI checks out the carrier repo at its pinned tag and
+// builds it before the suite runs; locally we resolve the same checkout's
+// built jar.
+val carrierJar: Path? by lazy {
+    val dirs = listOf(
+        rootProject.file("../kotlin-for-hytale/build/libs"),   // CI sibling checkout
+        rootProject.file("/home/agent/projects/kotlin-for-hytale/build/libs")) // the machine's checkout
+    dirs.firstNotNullOfOrNull { dir ->
+        dir.listFiles { f -> f.name.startsWith("kotlin-for-hytale-") && f.name.endsWith(".jar") }
+            ?.maxByOrNull { it.name }?.toPath()
+    }
+}
+if (carrierJar == null) {
+    println("WARN: kotlin-for-hytale carrier jar not found — the hytaleTest server will refuse the framework (manifest depends on it). Build kotlin-for-hytale first.")
 }
 
 hytest {
     // Forward the server's own logs while debugging a failing test.
     showServerLogs = providers.gradleProperty("hytestLogs").isPresent
+    // Dependency plugin jars deployed into the test server's mods/: the
+    // Kotlin runtime carrier the framework hard-depends on (see the hytale
+    // block above).
+    carrierJar?.let { extraMods.set(listOf(it)) }
     // The suite outgrew hytest's default 4G server heap at ~75 tests: torn-down
     // per-test worlds are reclaimed too slowly/lazily, the heap fills near the
     // end of the run and the JVM drops into a GC death spiral (all cores in

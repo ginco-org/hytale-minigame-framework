@@ -1,7 +1,7 @@
 {
   "Group": "gg.ginco",
   "Name": "MinigameFramework",
-  "Version": "0.1.1",
+  "Version": "0.2.0",
   "Description": "Minigame framework for Hytale",
   "Main": "gg.ginco.minigame.Plugin",
   "ServerVersion": "=0.6.8",
@@ -9,7 +9,7 @@
     {
       "Group": "Ginco",
       "Name": "Hytest",
-      "Version": "0.1.2",
+      "Version": "0.1.0",
       "Main": "gg.ginco.hytest.runtime.HytestPlugin"
     }
   ]

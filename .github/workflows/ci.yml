@@ -78,6 +78,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The suite's test server must carry the Kotlin runtime carrier (the
+      # framework's manifest hard-depends on it); build the pinned release
+      # before the suite runs. Public repo — the default token suffices.
+      - uses: actions/checkout@v4
+        with:
+          repository: ginco-org/kotlin-for-hytale
+          ref: v0.1.0
+          path: kotlin-for-hytale
+      - name: Build carrier jar
+        run: cd kotlin-for-hytale && ./gradlew jar
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
