@@ -230,11 +230,11 @@ repositories {
     maven("https://maven.hytale.com/release")
 }
 dependencies {
-    implementation("gg.ginco:hytale-minigame-framework:0.1.1")   // compile-time
+    implementation("gg.ginco:hytale-minigame-framework:0.4.0")   // compile-time
     compileOnly("com.hypixel.hytale:Server:0.6.8")               // server API
 }
 hytale {
-    depends("gg.ginco:MinigameFramework", ">=0.1")               // runtime
+    depends("gg.ginco:MinigameFramework", ">=0.4")               // runtime
     bundleDependencies = false
 }
 ```

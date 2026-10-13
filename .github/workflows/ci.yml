@@ -84,7 +84,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ginco-org/kotlin-for-hytale
-          ref: v0.1.0
+          ref: v0.1.1
           path: kotlin-for-hytale
       - name: Build carrier jar
         run: cd kotlin-for-hytale && ./gradlew jar

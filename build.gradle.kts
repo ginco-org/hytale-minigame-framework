@@ -3,7 +3,7 @@ import java.nio.file.Path
 import org.gradle.api.Task
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
 plugins {
-    // hygradle comes onto the classpath via gg.ginco.hygradle.settings (0.5.0) in
+    // hygradle comes onto the classpath via gg.ginco.hygradle.settings (0.7.0) in
     // settings.gradle.kts, so no version is declared here.
     id("gg.ginco.hygradle")
     kotlin("jvm") version "2.3.20"
@@ -14,7 +14,7 @@ plugins {
     // runtime artifacts to its own release (0.1.2 fixed the convention the
     // 0.1.1 plugin hardcoded at apply() time, breaking consumer bumps —
     // ginco-org/hytest#2), so the plugin version is the whole knob.
-    id("gg.ginco.hytest") version "0.2.0"
+    id("gg.ginco.hytest") version "0.3.0"
     id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
@@ -41,7 +41,7 @@ hytale {
     // kotlin-for-hytale is the server's single Kotlin runtime (see README
     // "Packaging"); our manifest demands it so the server refuses us when
     // the carrier is missing — and load order guarantees the runtime.
-    depends("gg.ginco:KotlinForHytale", ">=0.1")
+    depends("gg.ginco:KotlinForHytale", ">=0.1.1")
     group = "gg.ginco"
     bundleDependencies = true
     name = "MinigameFramework"
