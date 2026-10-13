@@ -22,11 +22,14 @@ import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.PendingInstanceEntry
+import gg.ginco.minigame.component.PreservedMembers
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.component.TeamMembers
 import gg.ginco.minigame.component.TeamRef
+import gg.ginco.minigame.event.PlayerJoinedInstanceEvent
+import gg.ginco.minigame.event.PlayerLeftInstanceEvent
 import org.joml.Vector3d
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -79,6 +82,8 @@ import java.util.concurrent.TimeUnit
  *   reports no error.
  */
 object Instances {
+    private val LOGGER = com.hypixel.hytale.logger.HytaleLogger.get("MinigameFramework")
+
     private const val SPAWN_TIMEOUT_SECONDS = 60L
 
     // ---- world classification -----------------------------------------------
@@ -142,7 +147,7 @@ object Instances {
             InstancesPlugin.get().spawnInstance(assetName, sourceWorld, returnPoint)
                 .orTimeout(SPAWN_TIMEOUT_SECONDS, TimeUnit.SECONDS).join()
         } catch (e: Exception) {
-            System.err.println("[MinigameFramework] failed to spawn instance asset '$assetName': $e")
+            LOGGER.atSevere().withCause(e).log("Failed to spawn instance asset '$assetName'")
             return null
         }
 
@@ -155,7 +160,7 @@ object Instances {
                 instanceWorld
             }
         } catch (e: Exception) {
-            System.err.println("[MinigameFramework] failed to populate instance world '${instanceWorld.name}': $e")
+            LOGGER.atSevere().withCause(e).log("Failed to populate instance world '${instanceWorld.name}'")
             null
         }
     }
@@ -257,17 +262,23 @@ object Instances {
         store.addComponent(playerEntity, InMinigame.componentType, InMinigame(controllerRef))
         store.addComponent(playerEntity, Role.componentType, role)
 
-        val uuid = store.getComponent(playerEntity, PlayerRef.getComponentType())?.uuid ?: return
+        val playerRef = store.getComponent(playerEntity, PlayerRef.getComponentType()) ?: return
         for (team in Teams.of(store, controllerRef)) {
             val roster = store.getComponent(team.ref, TeamMembers.componentType) ?: continue
-            if (uuid in roster.members) {
+            if (playerRef.uuid in roster.members) {
                 store.addComponent(playerEntity, TeamRef.componentType, TeamRef(team.ref))
                 break
             }
         }
+        // A preserved record for this uuid exists only for a RESTORED membership
+        // (a returning member): consume it now that the linkage is rebuilt on
+        // arrival — a fresh join never has one.
+        store.getComponent(controllerRef, PreservedMembers.componentType)
+            ?.members?.removeAll { it.uuid == playerRef.uuid }
         // Arrival into an instance world is also a join: participants landing
         // now must not see the spectators who are already watching.
         Roles.hideSpectatorsFrom(store, controllerRef, playerEntity)
+        PlayerJoinedInstanceEvent.dispatch(playerRef, playerEntity, controllerRef, role)
     }
 
     /**
@@ -295,6 +306,9 @@ object Instances {
      * membership itself: the entity is still in the lobby store at that point.
      */
     fun markPendingEntry(store: Store<EntityStore>, playerEntity: Ref<EntityStore>, worldName: String, role: Role) {
+        // Replace semantics: a requeue (or a stale marker from an aborted hop)
+        // may still carry one — adding on top of the old marker would keep both.
+        store.removeComponentIfExists(playerEntity, PendingInstanceEntry.componentType)
         store.addComponent(playerEntity, PendingInstanceEntry.componentType, PendingInstanceEntry(worldName, role.kind.name, role.reason))
     }
 
@@ -339,6 +353,13 @@ object Instances {
         // Players first: exitInstance reads the return point off the player's own
         // entity, and membership must be stripped while the refs are still valid.
         for (player in players) {
+            // Left fires BEFORE the strip: role and PlayerRef are still readable.
+            val playerRef = store.getComponent(player, PlayerRef.getComponentType())
+            val role = store.getComponent(player, Role.componentType)
+            if (playerRef != null) {
+                PlayerLeftInstanceEvent.dispatch(playerRef.uuid, playerRef.username, controllerRef, role,
+                    player = playerRef, playerEntity = player)
+            }
             stripMembership(store, player)
             InstancesPlugin.exitInstance(player, store)
         }
@@ -357,6 +378,49 @@ object Instances {
         store.removeEntity(controllerRef, RemoveReason.REMOVE)
 
         InstancesPlugin.safeRemoveInstance(instanceWorld)
+    }
+
+    // ---- queued players (pre-start) ------------------------------------------
+
+    /** Looks a loaded world up by name, or null when it is not loaded. */
+    fun worldByName(name: String): World? =
+        Universe.get().worlds[name]
+
+    /**
+     * Moves every player still queued-and-not-transferred (their entity carries
+     * [PendingInstanceEntry] naming [targetWorld]) into [targetWorld]. The queue
+     * no longer teleports people at queue time; this runs the moment a countdown
+     * starts, so queuers watch the countdown inside the map and
+     * `InstanceEntrySystem` applies membership on arrival. Each queued player's
+     * entity lives in another world's store, so the scan — and
+     * [teleportPlayerIn], which must run on the player's current world thread —
+     * executes on each world's own queue via [onWorldThread]: hop-and-wait would
+     * deadlock a world tick that starts a countdown while another world's thread
+     * is simultaneously waiting on ours. [notice] rides along with the hop (the
+     * in-instance broadcast cannot reach players still in their own worlds).
+     */
+    fun teleportQueuedInto(targetWorld: World, notice: String? = null) {
+        val targetName = targetWorld.name
+        for (world in Universe.get().worlds.values) {
+            if (world === targetWorld) continue
+            onWorldThread(world) {
+                val store = world.entityStore.store
+                val arrivals = mutableListOf<PlayerRef>()
+                val scan = java.util.function.BiConsumer<ArchetypeChunk<EntityStore>, CommandBuffer<EntityStore>> { chunk, _ ->
+                    for (i in 0 until chunk.size()) {
+                        val entry = chunk.getComponent(i, PendingInstanceEntry.componentType) ?: continue
+                        if (entry.worldName != targetName) continue
+                        store.getComponent(chunk.getReferenceTo(i), PlayerRef.getComponentType())
+                            ?.let { arrivals.add(it) }
+                    }
+                }
+                store.forEachChunk(Archetype.of(PendingInstanceEntry.componentType), scan)
+                for (playerRef in arrivals) {
+                    if (notice != null) playerRef.sendMessage(com.hypixel.hytale.server.core.Message.raw(notice))
+                    teleportPlayerIn(playerRef, targetWorld)
+                }
+            }
+        }
     }
 
     // ---- threading -----------------------------------------------------------

@@ -27,6 +27,7 @@ import gg.ginco.minigame.component.EndReason
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.Phase
+import gg.ginco.minigame.component.PreservedMembers
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.component.TeamMembers
@@ -39,7 +40,9 @@ import gg.ginco.minigame.util.InstanceRegistry
 import gg.ginco.minigame.util.Instances
 import gg.ginco.minigame.util.Membership
 import gg.ginco.minigame.util.Parties
+import gg.ginco.minigame.util.Phases
 import gg.ginco.minigame.util.PlayerSet
+import gg.ginco.minigame.event.PlayerJoinedInstanceEvent
 import gg.ginco.minigame.util.Teams
 import org.joml.Vector3d
 import java.util.function.BiConsumer
@@ -128,11 +131,12 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
          * archetype would snapshot nulls and every store scan would silently
          * match nothing (validation then rejects any holder built from it).
          *
-         * Every component a controller ever carries is part of the archetype:
-         * instances are created through `newHolder(archetype, ...)`, and the
-         * ECS matches archetypes by exact component set — a controller with
-         * [InstanceId] would be invisible to a [ControllerComponent]+[Phase]
-         * archetype.
+         * Scan archetypes may be NARROWER than this one: the ECS streams chunks
+         * whose components are a SUPERSET of the requested set — PhaseSystem
+         * scans [ControllerComponent]+[Phase] over controllers that also carry
+         * [InstanceId] and [PreservedMembers]. What must match the archetype
+         * exactly is the `newHolder` array: each component at its type's slot,
+         * nothing extra and nothing missing.
          */
         val CONTROLLERS: Archetype<EntityStore> by lazy {
             Archetype.of(ControllerComponent.componentType, Phase.componentType, InstanceId.componentType)
@@ -164,6 +168,53 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
         /** Reads the shared `--game=<id>` optional arg; null when the caller did not restrict the target. */
         fun targetInstance(context: CommandContext, gameArg: Argument<*, Int>): Int? =
             if (context.provided(gameArg)) context.get(gameArg) else null
+
+        /**
+         * The instance's seat accounting: every roster uuid + present member —
+         * preserved (disconnected) members HOLD their seat, so they count here.
+         * This is what the join cap enforces; [headcount] is the "who is here /
+         * reachable" truth the auto-start floor and `status` use.
+         */
+        internal fun seatCount(store: Store<EntityStore>, controllerRef: Ref<EntityStore>): Int {
+            val uuids = HashSet<java.util.UUID>()
+            for (team in Teams.of(store, controllerRef)) {
+                store.getComponent(team.ref, TeamMembers.componentType)?.members?.let { uuids.addAll(it) }
+            }
+            for (memberRef in PlayerSet(store, controllerRef).all()) {
+                store.getComponent(memberRef, PlayerRef.getComponentType())?.let { uuids.add(it.uuid) }
+            }
+            return uuids.size
+        }
+
+        /**
+         * The instance's headcount across BOTH member styles: physically present
+         * ([InMinigame] entities in this store — in-place joins, arrived players)
+         * and roster-only members. Queued players are NOT teleported into the map
+         * world at queue time any more, so before the countdown starts they exist
+         * only as uuids on team rosters — a [PlayerSet]-only count would read 0
+         * and the min-players floor would never fire. Deduplicates by uuid (an
+         * arrived player sits in both the roster and the store).
+         *
+         * Preserved members are disconnected (their seat is held, but they are
+         * not here): excluded — this keeps the auto-start floor honest (it must
+         * not fire while every member is away) and `status`'s player count
+         * truthful. The join cap uses [seatCount], where they hold the seat.
+         */
+        fun headcount(store: Store<EntityStore>, controllerRef: Ref<EntityStore>): Int {
+            val preserved = store.getComponent(controllerRef, PreservedMembers.componentType)
+                ?.members?.map { it.uuid }
+                ?: return seatCount(store, controllerRef)
+            if (preserved.isEmpty()) return seatCount(store, controllerRef)
+            val uuids = HashSet<java.util.UUID>()
+            for (team in Teams.of(store, controllerRef)) {
+                store.getComponent(team.ref, TeamMembers.componentType)?.members?.let { uuids.addAll(it) }
+            }
+            for (memberRef in PlayerSet(store, controllerRef).all()) {
+                store.getComponent(memberRef, PlayerRef.getComponentType())?.let { uuids.add(it.uuid) }
+            }
+            uuids.removeAll(preserved)
+            return uuids.size
+        }
     }
 }
 
@@ -324,7 +375,7 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
             it.phase.kind == Phase.Kind.WAITING && (targetId == null || it.id == targetId)
         }
         for (instance in targets) {
-            store.replaceComponent(instance.ref, Phase.componentType, Phase.countdown(countdownSeconds))
+            Phases.set(store, instance.ref, Phase.countdown(countdownSeconds))
         }
 
         val scope = if (targetId != null) "instance #$targetId" else "all waiting instances"
@@ -345,7 +396,13 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
                 val store = instanceWorld.entityStore.store
                 val waiting = MinigameCommand.snapshot(store).filter { it.phase.kind == Phase.Kind.WAITING }
                 for (instance in waiting) {
-                    store.replaceComponent(instance.ref, Phase.componentType, Phase.countdown(countdownSeconds))
+                    Phases.set(store, instance.ref, Phase.countdown(countdownSeconds))
+                }
+                if (waiting.isNotEmpty()) {
+                    // Countdown just began — bring the queue in from the lobby
+                    // (see QueueFlow.queueInto: no teleport at queue time).
+                    Instances.teleportQueuedInto(instanceWorld,
+                        "Your minigame is starting in $countdownSeconds s — moving you into the map now.")
                 }
                 waiting.size
             }
@@ -426,7 +483,7 @@ class StopCommand : AbstractWorldCommand("stop", "minigame.commands.stop.desc") 
         // inside the forEachChunk processing window).
         val targets = MinigameCommand.snapshot(store).filter { it.isLive && (targetId == null || it.id == targetId) }
         for (instance in targets) {
-            store.replaceComponent(instance.ref, Phase.componentType, Phase.ending(EndReason.FORCED))
+            Phases.set(store, instance.ref, Phase.ending(EndReason.FORCED))
             PlayerSet(store, instance.ref).sendMessage(Message.raw("The minigame has been stopped."))
         }
 
@@ -467,7 +524,7 @@ class StatusCommand : AbstractWorldCommand("status", "minigame.commands.status.d
 
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
         val lines = MinigameCommand.snapshot(store).map { instance ->
-            val players = PlayerSet(store, instance.ref).count()
+            val players = MinigameCommand.headcount(store, instance.ref)
             "#${instance.id} gameType=${gameTypeOf(store, instance.ref)} phase=${describe(instance.phase)} players=$players"
         }
 
@@ -505,16 +562,34 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
         // One minigame at a time: joining another automatically leaves the
         // current one first (queue switch) — roster slot released, membership
         // stripped, no teleport home since they are joining somewhere else.
-        if (store.getComponent(ref, InMinigame.componentType) != null) {
+        // A live but untransferred queue marker counts too, or replacing it
+        // below would orphan the roster slot of the instance world it names.
+        if (store.getComponent(ref, InMinigame.componentType) != null ||
+            store.getComponent(ref, gg.ginco.minigame.component.PendingInstanceEntry.componentType) != null) {
             QueueFlow.leaveCurrentMinigame(store, ref, playerRef)
         }
 
-        // A returning player with preserved membership comes first: joining
+// A returning player with preserved membership comes first: joining
         // restores their exact instance, role and team.
         if (Membership.restoreIfPreserved(store, ref, playerRef)) {
             val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
             PlayerSet(store, controllerRef!!).sendMessage(
                 Message.raw("${playerRef.username} rejoined the minigame."))
+            return
+        }
+
+        // A preserved membership of an instance that lives in ITS OWN WORLD
+        // cannot be restored from this store (no controller here): scan the
+        // instance worlds for the record instead. The restored role rides on
+        // the pending entry; arrival applies it and consumes the record
+        // (Instances.applyMembership). This is what makes a mid-game disconnect
+        // of an instance-world member recoverable.
+        val restoredCrossWorld = QueueFlow.findPreservedFor(playerRef.uuid)
+        if (restoredCrossWorld != null) {
+            InstanceRegistry.remember(playerRef.uuid, world.name)
+            Instances.markPendingEntry(store, ref, restoredCrossWorld.world.name, restoredCrossWorld.role)
+            Instances.teleportPlayerIn(playerRef, restoredCrossWorld.world)
+            context.sendMessage(Message.raw("Returning you to your minigame…"))
             return
         }
 
@@ -597,6 +672,7 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
         // A participant who joins now must not see the spectators who are
         // already watching — spectate hid them from the members of ITS time.
         gg.ginco.minigame.util.Roles.hideSpectatorsFrom(store, target.ref, ref)
+        PlayerJoinedInstanceEvent.dispatch(playerRef, ref, target.ref, Role.participant())
         PlayerSet(store, target.ref).sendMessage(Message.raw("${playerRef.username} joined the minigame."))
     }
 
@@ -616,62 +692,47 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
         world: World,
         asset: String,
     ) {
-        val chosen = QueueFlow.pickJoinable(asset)
-        if (chosen == null) {
-            val running = QueueFlow.scan(asset)
-            if (running.isEmpty()) {
-                context.sendMessage(Message.raw("No running instance of '$asset' to join."))
-            } else {
-                val full = running.first()
-                context.sendMessage(Message.raw("Instance of '$asset' is full (${full.count}/${full.maxPlayers})."))
-            }
-            return
-        }
-
         // The sender's own state is captured here, in the lobby store, because it
         // is unreadable once they leave: the uuid keys the roster, and the return
         // world is where they are sent back to.
         val uuid = playerRef.uuid
         val lobbyName = world.name
-
-        // Reuse the player's existing slot/team when they already have one (a
-        // reconnect or a second join), so a roster is never duplicated.
         val teamName = if (context.provided(teamArg)) context.get(teamArg) else null
 
-        InstanceRegistry.remember(uuid, lobbyName)
-        Instances.markPendingEntry(store, ref, chosen.world.name, Role.participant())
-
-        // The roster must be written BEFORE the transfer: joining is
-        // asynchronous, and the membership applied on arrival is derived from
-        // whoever the roster lists. A named team is created in the instance if
-        // it does not exist yet — the definition's teams are not enough, since a
-        // second team for the same instance may not be authored at all.
-        var autoTeam: String? = null
-        if (teamName != null) {
-            onInstanceWorldThread(chosen.world) {
-                val controller = Instances.findController(chosen.world) ?: return@onInstanceWorldThread
-                Instances.addTeamMember(chosen.world, controller, teamName, uuid)
-            }
-        } else {
-            // Balance: an unnamed team lands the participant on the lightest
-            // rostered team of the instance (ties: definition order).
-            onInstanceWorldThread(chosen.world) {
-                val controller = Instances.findController(chosen.world) ?: return@onInstanceWorldThread
-                val tStore = chosen.world.entityStore.store
-                val team = Teams.smallest(tStore, controller) ?: return@onInstanceWorldThread
-                tStore.getComponent(team.ref, TeamMembers.componentType)?.members?.add(uuid)
-                autoTeam = team.data.name
-            }
-            autoTeam?.let { context.sendMessage(Message.raw("You are on team '$it'.")) }
+        // Every instance world playing [asset]; admission (live / full / team
+        // fit) and the roster write happen in ONE hop on the target world's
+        // thread — two concurrent joins can never win the same seat.
+        val running = QueueFlow.scan(asset)
+        if (running.isEmpty()) {
+            context.sendMessage(Message.raw("No running instance of '$asset' to join."))
+            return
         }
+        val target = running.firstOrNull { it.joinable } ?: running.first()
 
-        Instances.teleportPlayerIn(playerRef, chosen.world)
-        context.sendMessage(Message.raw("Joining the $asset minigame…"))
-    }
-
-    /** Blocks until [body] has run on [world]'s thread (used for the pre-transfer roster write). */
-    private fun onInstanceWorldThread(world: World, body: () -> Unit) {
-        Instances.runOnWorld(world, body)
+        when (val seat = QueueFlow.acquireSeat(target, uuid, teamName)) {
+            is QueueFlow.Seat.Refused -> {
+                when (seat.kind) {
+                    QueueFlow.Refusal.INSTANCE_FULL -> context.sendMessage(Message.raw(
+                        "Instance of '$asset' is full (${seat.count}/${seat.max}) — try again shortly."))
+                    QueueFlow.Refusal.LIVE -> context.sendMessage(Message.raw(
+                        "A game of '$asset' is already in progress — joins open again when it ends."))
+                    QueueFlow.Refusal.TEAM_FULL -> context.sendMessage(Message.raw(
+                        "Team '${seat.team}' is full — nobody joined."))
+                    QueueFlow.Refusal.TEAM_MISSING -> context.sendMessage(Message.raw(
+                        "Team '${seat.team}' could not be joined — nobody joined."))
+                    QueueFlow.Refusal.NO_INSTANCE -> context.sendMessage(Message.raw(
+                        "No running instance of '$asset' to join."))
+                }
+                return
+            }
+            is QueueFlow.Seat.Granted -> {
+                InstanceRegistry.remember(uuid, lobbyName)
+                Instances.markPendingEntry(store, ref, seat.candidate.world.name, Role.participant())
+                seat.team?.let { context.sendMessage(Message.raw("You are on team '$it'.")) }
+                Instances.teleportPlayerIn(playerRef, seat.candidate.world)
+                context.sendMessage(Message.raw("Joining the $asset minigame…"))
+            }
+        }
     }
 
     /**
@@ -763,10 +824,11 @@ class JoinCommand : AbstractPlayerCommand("join", "minigame.commands.join.desc")
         }
 
         // All checks passed — apply to every member.
-        for ((memberRef, _) in members) {
+        for ((memberRef, memberPlayerRef) in members) {
             store.addComponent(memberRef, InMinigame.componentType, InMinigame(target.ref))
             store.addComponent(memberRef, Role.componentType, Role.participant())
             gg.ginco.minigame.util.Roles.hideSpectatorsFrom(store, target.ref, memberRef)
+            PlayerJoinedInstanceEvent.dispatch(memberPlayerRef, memberRef, target.ref, Role.participant())
         }
         if (chosen != null) {
             val roster = store.getComponent(chosen.ref, TeamMembers.componentType)?.members
@@ -1055,6 +1117,8 @@ internal object QueueFlow {
         val maxPlayers: Int,
         /** Waiting/Countdown — captured on the world's own thread. */
         val joinable: Boolean,
+        /** Phase kind captured with the same snapshot — the queue hops into a countdown already running. */
+        val phase: Phase.Kind,
     ) {
         /** Room for at least one more player (`MaxPlayers <= 0` is uncapped). */
         val hasRoom: Boolean get() = maxPlayers <= 0 || count < maxPlayers
@@ -1094,6 +1158,143 @@ internal object QueueFlow {
     fun pickJoinableForGame(gameTypeId: String, instanceAsset: String? = null): Candidate? =
         scanForGame(gameTypeId, instanceAsset).firstOrNull { it.joinable && it.hasRoom }
 
+    // ---- atomic admission ---------------------------------------------------
+
+    /**
+     * One admission attempt's outcome. The capacity decision and the roster
+     * write happened atomically inside [acquireSeat] — a call either holds a
+     * granted seat or left the instance untouched.
+     */
+    sealed interface Seat {
+        /** Granted; [candidate] reflects the instance AFTER the roster write (its [Candidate.count] includes the joiner). */
+        data class Granted(val candidate: Candidate, val team: String? = null) : Seat
+
+        data class Refused(
+            val kind: Refusal,
+            /** Instance id, when a controller was found. */
+            val id: Int? = null,
+            /** Headcount + join cap at decision time (for `full` renderings). */
+            val count: Int? = null,
+            val max: Int? = null,
+            /** Team name for TEAM_* refusals. */
+            val team: String? = null,
+        ) : Seat
+    }
+
+    enum class Refusal {
+        NO_INSTANCE,
+        /** The instance went live (Playing/Ending) between the scan and admission. */
+        LIVE,
+        INSTANCE_FULL,
+        TEAM_MISSING,
+        TEAM_FULL,
+    }
+
+    /**
+     * Admission in ONE hop on the instance world's thread: the capacity
+     * decision and the roster write are the same world-thread execution, so
+     * two concurrent joins can never win the same seat. Everything is
+     * re-read here — the caller's [Candidate] only names the world to try.
+     *
+     * [teamName] names an EXISTING team (its `maxPlayers` is enforced here,
+     * which only `/minigame team join` did before) or a NEW one, which is
+     * created just as the old write path always did; null hands the joiner to
+     * [Teams.smallest], or leaves them unteamed when the instance has no teams.
+     */
+    fun acquireSeat(candidate: Candidate, uuid: java.util.UUID, teamName: String?): Seat =
+        Instances.runOnWorld(candidate.world) {
+            val store = candidate.world.entityStore.store
+            val snapshot = MinigameCommand.snapshot(store).firstOrNull { it.ref == candidate.controllerRef }
+                ?: return@runOnWorld Seat.Refused(Refusal.NO_INSTANCE)
+            if (!snapshot.isJoinable) {
+                return@runOnWorld Seat.Refused(Refusal.LIVE, snapshot.id,
+                    MinigameCommand.seatCount(store, candidate.controllerRef), candidate.maxPlayers)
+            }
+            val max = store.getComponent(candidate.controllerRef, ControllerComponent.componentType)?.maxPlayers ?: 0
+            val count = MinigameCommand.seatCount(store, candidate.controllerRef)
+            if (max > 0 && count >= max) {
+                return@runOnWorld Seat.Refused(Refusal.INSTANCE_FULL, snapshot.id, count, max)
+            }
+
+            var assigned: String? = null
+            if (teamName != null) {
+                val existing = Teams.findByName(store, candidate.controllerRef, teamName)
+                if (existing != null) {
+                    val roster = store.getComponent(existing.ref, TeamMembers.componentType)?.members
+                        ?: return@runOnWorld Seat.Refused(Refusal.TEAM_MISSING, snapshot.id, team = teamName)
+                    if (existing.data.maxPlayers in 1..roster.size) {
+                        return@runOnWorld Seat.Refused(Refusal.TEAM_FULL, snapshot.id, count, max, teamName)
+                    }
+                    if (uuid !in roster) roster.add(uuid)
+                    assigned = teamName
+                } else {
+                    // A --team join creates a missing team: the definition's
+                    // teams are not enough, since a second team for the same
+                    // instance may not be authored at all (was true when this
+                    // write lived in Instances.addTeamMember).
+                    val created = Teams.createTeam(store, candidate.controllerRef, TeamData(name = teamName))
+                        ?: return@runOnWorld Seat.Refused(Refusal.TEAM_MISSING, snapshot.id, team = teamName)
+                    store.getComponent(created, TeamMembers.componentType)?.members?.let { roster ->
+                        if (uuid !in roster) roster.add(uuid)
+                    }
+                    assigned = teamName
+                }
+            } else {
+                val team = Teams.smallest(store, candidate.controllerRef)
+                if (team != null) {
+                    val roster = store.getComponent(team.ref, TeamMembers.componentType)?.members
+                    if (roster == null) {
+                        return@runOnWorld Seat.Refused(Refusal.TEAM_MISSING, snapshot.id)
+                    }
+                    if (uuid !in roster) roster.add(uuid)
+                    assigned = team.data.name
+                }
+                // No teams at all: unteamed join (in-world join semantics).
+            }
+            Seat.Granted(
+                Candidate(candidate.world, candidate.controllerRef, snapshot.id, count + 1, max,
+                    snapshot.isJoinable, snapshot.phase.kind),
+                assigned)
+        }
+
+    // ---- preserved-membership discovery (reconnect restore) ----------------
+
+    /**
+     * Where a player's preserved membership lives: the instance world, its
+     * controller and the [Role] to reapply (kind/reason taken from the
+     * preserved record)
+     */
+    data class PreservedSite(
+        val world: com.hypixel.hytale.server.core.universe.world.World,
+        val controllerRef: com.hypixel.hytale.component.Ref<com.hypixel.hytale.server.core.universe.world.storage.EntityStore>,
+        val role: Role,
+    )
+
+    /**
+     * The first live instance world holding a preserved-membership record for
+     * [uuid] — the scan [Membership.restoreIfPreserved] cannot perform (that
+     * one only sees controllers of its own store). ENDING/CLEANUP instances
+     * are skipped: everything there is about to be released. Worlds are
+     * visited in deterministic order ([Instances.instanceWorlds]).
+     */
+    fun findPreservedFor(uuid: java.util.UUID): PreservedSite? =
+        Instances.instanceWorlds().firstNotNullOfOrNull { world ->
+            Instances.runOnWorld(world) {
+                val store = world.entityStore.store
+                val controller = Instances.findController(world) ?: return@runOnWorld null
+                val snapshot = MinigameCommand.snapshot(store).firstOrNull { it.ref == controller }
+                    ?: return@runOnWorld null
+                if (snapshot.phase.kind == Phase.Kind.ENDING || snapshot.phase.kind == Phase.Kind.CLEANUP) {
+                    return@runOnWorld null
+                }
+                val record = store.getComponent(controller, PreservedMembers.componentType)
+                    ?.members?.firstOrNull { it.uuid == uuid }
+                    ?: return@runOnWorld null
+                val kind = Role.Kind.entries.firstOrNull { it.name == record.roleKind } ?: Role.Kind.PARTICIPANT
+                PreservedSite(world, controller, Role(kind, record.reason))
+            }
+        }
+
     private fun candidateOf(
         world: com.hypixel.hytale.server.core.universe.world.World,
         gameTypeId: String?,
@@ -1115,9 +1316,10 @@ internal object QueueFlow {
                 ?: return@runOnWorld null
             Candidate(
                 world, controller, snapshot.id,
-                PlayerSet(store, controller).all().size,
+                MinigameCommand.seatCount(store, controller),
                 store.getComponent(controller, ControllerComponent.componentType)?.maxPlayers ?: 0,
                 snapshot.isJoinable,
+                snapshot.phase.kind,
             )
         }
 
@@ -1144,6 +1346,11 @@ internal object QueueFlow {
             return
         }
 
+        // A queue registered but not yet transferred (the queue no longer
+        // teleports at join time): release the roster slot in the named
+        // instance world and clear the pending marker locally.
+        releaseIfPending(store, ref, playerRef, refuseIfLive = false)
+
         val controllerRef = Membership.leave(store, ref, playerRef)
         if (controllerRef != null && controllerRef.isValid()) {
             PlayerSet(store, controllerRef).sendMessage(Message.raw("${playerRef.username} left the minigame."))
@@ -1163,6 +1370,11 @@ internal object QueueFlow {
         ref: com.hypixel.hytale.component.Ref<com.hypixel.hytale.server.core.universe.world.storage.EntityStore>,
         playerRef: PlayerRef,
     ): String? {
+        // Queued but not yet transferred: release the roster slot over there
+        // (refusing when the game already went live — exits there are
+        // `/minigame leave`), then clean up locally.
+        releaseIfPending(store, ref, playerRef, refuseIfLive = true)?.let { return it }
+
         val foreignController = Instances.crossWorldControllerOf(store, ref)
         val live: Boolean
         if (foreignController != null) {
@@ -1209,10 +1421,52 @@ internal object QueueFlow {
     }
 
     /**
-     * The join write, shared by the queue paths: pre-transfer registration
-     * (uuid -> lobby, pending entry), team balance on the instance's world
-     * thread, then the transfer. Announces the assigned team when one was
-     * chosen by balancing.
+     * A queue registered but NOT yet transferred (the queue no longer teleports
+     * at join time): the [gg.ginco.minigame.component.PendingInstanceEntry] on
+     * the player's own entity names the instance world. Releases the roster slot
+     * over there (unless the minigame already went live and [refuseIfLive] is
+     * set — live exits belong to `/minigame leave`), clears the marker here and
+     * forgets the lobby record. A target world that has since vanished is just
+     * cleaned up locally.
+     *
+     * @return null on a clean release; the sender-facing refusal otherwise.
+     */
+    fun releaseIfPending(
+        store: com.hypixel.hytale.component.Store<com.hypixel.hytale.server.core.universe.world.storage.EntityStore>,
+        ref: com.hypixel.hytale.component.Ref<com.hypixel.hytale.server.core.universe.world.storage.EntityStore>,
+        playerRef: PlayerRef,
+        refuseIfLive: Boolean,
+    ): String? {
+        val entry = store.getComponent(ref, gg.ginco.minigame.component.PendingInstanceEntry.componentType) ?: return null
+        val targetWorld = Instances.worldByName(entry.worldName)
+        var live = false
+        if (targetWorld != null) {
+            Instances.runOnWorld(targetWorld) {
+                val controllerRef = Instances.findController(targetWorld)
+                if (controllerRef != null) {
+                    val snapshot = MinigameCommand.snapshot(targetWorld.entityStore.store)
+                        .firstOrNull { it.ref == controllerRef }
+                    val kind = snapshot?.phase?.kind
+                    if (refuseIfLive && (kind == Phase.Kind.PLAYING || kind == Phase.Kind.ENDING)) {
+                        live = true
+                    } else {
+                        Membership.releaseIn(targetWorld, controllerRef, playerRef.uuid, playerRef.username)
+                    }
+                }
+            }
+        }
+        if (live) return "Your minigame already started — use /minigame leave instead."
+        store.removeComponentIfExists(ref, gg.ginco.minigame.component.PendingInstanceEntry.componentType)
+        InstanceRegistry.forget(playerRef.uuid)
+        return null
+    }
+
+    /**
+     * The join write, shared by the queue paths: admission + team balance in
+     * ONE hop ([acquireSeat] — the capacity decision and the roster write are
+     * atomic), then the caller-side pre-transfer registration (uuid -> lobby,
+     * pending entry). Announces the assigned team when one was chosen by
+     * balancing.
      */
     fun queueInto(
         context: com.hypixel.hytale.server.core.command.system.CommandContext,
@@ -1222,23 +1476,42 @@ internal object QueueFlow {
         lobbyWorld: com.hypixel.hytale.server.core.universe.world.World,
         target: Candidate,
     ) {
-        val uuid = playerRef.uuid
-        InstanceRegistry.remember(uuid, lobbyWorld.name)
-        Instances.markPendingEntry(store, ref, target.world.name, Role.participant())
+        when (val seat = acquireSeat(target, playerRef.uuid, null)) {
+            is Seat.Refused -> {
+                when (seat.kind) {
+                    Refusal.INSTANCE_FULL -> context.sendMessage(Message.raw(
+                        "Queue for instance #${seat.id} is full (${seat.count}/${seat.max}) — try again shortly."))
+                    Refusal.LIVE -> context.sendMessage(Message.raw(
+                        "Your minigame already started — try again shortly."))
+                    else -> context.sendMessage(Message.raw(
+                        "Could not queue into instance #${seat.id} — try again shortly."))
+                }
+                return
+            }
+            is Seat.Granted -> {
+                val granted = seat.candidate
+                InstanceRegistry.remember(playerRef.uuid, lobbyWorld.name)
+                Instances.markPendingEntry(store, ref, granted.world.name, Role.participant())
+                seat.team?.let { context.sendMessage(Message.raw("You are on team '$it'.")) }
 
-        var autoTeam: String? = null
-        Instances.runOnWorld(target.world) {
-            val tStore = target.world.entityStore.store
-            val team = Teams.smallest(tStore, target.controllerRef) ?: return@runOnWorld
-            tStore.getComponent(team.ref, TeamMembers.componentType)?.members?.add(uuid)
-            autoTeam = team.data.name
+                // The queue does NOT pull people into the map world at join
+                // time: they stay where they are, roster slot + pending entry
+                // recorded, and the hop happens when the countdown starts
+                // (PhaseSystem auto-start / `start --asset`). Exception: a
+                // queue whose countdown is ALREADY running — there the joiner
+                // hops straight in.
+                if (granted.phase == Phase.Kind.COUNTDOWN) {
+                    Instances.teleportPlayerIn(playerRef, granted.world)
+                    val fillNow = if (granted.maxPlayers > 0) " of ${granted.maxPlayers}" else ""
+                    context.sendMessage(Message.raw(
+                        "Queued into instance #${granted.id} (${granted.count}$fillNow players) — countdown running, moving you into the map now."))
+                    return
+                }
+                val fill = if (granted.maxPlayers > 0) " of ${granted.maxPlayers}" else ""
+                context.sendMessage(Message.raw(
+                    "Queued into instance #${granted.id} (${granted.count}$fill players) — you'll be moved into the map when the game starts."))
+            }
         }
-        autoTeam?.let { context.sendMessage(Message.raw("You are on team '$it'.")) }
-
-        Instances.teleportPlayerIn(playerRef, target.world)
-        val fill = if (target.maxPlayers > 0) " of ${target.maxPlayers}" else ""
-        context.sendMessage(Message.raw(
-            "Queued into instance #${target.id} (${target.count + 1}$fill players) — the minigame starts when the min players are reached."))
     }
 }
 
@@ -1274,8 +1547,10 @@ class QueueCommand : AbstractPlayerCommand("queue", "minigame.commands.queue.des
         val mapId = if (context.provided(mapArg)) context.get(mapArg) else null
 
         // One minigame at a time: queueing elsewhere switches (leaves the old
-        // one first).
-        if (store.getComponent(ref, InMinigame.componentType) != null) {
+        // one first). A queue registered but not yet transferred counts too —
+        // its roster slot lives in the instance world with no local link.
+        if (store.getComponent(ref, InMinigame.componentType) != null ||
+            store.getComponent(ref, gg.ginco.minigame.component.PendingInstanceEntry.componentType) != null) {
             QueueFlow.leaveCurrentMinigame(store, ref, playerRef)
         }
 
@@ -1293,7 +1568,6 @@ class QueueCommand : AbstractPlayerCommand("queue", "minigame.commands.queue.des
                 }
             }
         }
-        resolved as ResolvedMinigame.Ready
 
         if (resolved.instanceAsset.isEmpty()) {
             context.sendMessage(Message.raw(
@@ -1313,9 +1587,15 @@ class QueueCommand : AbstractPlayerCommand("queue", "minigame.commands.queue.des
         // room may also be exhausted by MaxPlayers.
         val running = QueueFlow.scanForGame(resolved.gameTypeId, resolved.instanceAsset)
         if (running.isNotEmpty()) {
-            val full = running.first()
-            context.sendMessage(Message.raw(
-                "Queue for '$gameTypeId' is full (${full.count}/${full.maxPlayers}) — try again shortly."))
+            val live = running.firstOrNull { !it.joinable }
+            if (live != null) {
+                context.sendMessage(Message.raw(
+                    "A game of '$gameTypeId' is already in progress — a new queue opens when it ends."))
+            } else {
+                val full = running.first()
+                context.sendMessage(Message.raw(
+                    "Queue for '$gameTypeId' is full (${full.count}/${full.maxPlayers}) — try again shortly."))
+            }
             return
         }
 
@@ -1338,10 +1618,20 @@ class QueueCommand : AbstractPlayerCommand("queue", "minigame.commands.queue.des
         val candidate = QueueFlow.scanForGame(resolved.gameTypeId, resolved.instanceAsset)
             .firstOrNull { it.world == instanceWorld }
         if (candidate == null) {
-            // The scan must see the freshly created controller; if not, fall
-            // back to teleporting in without the numbered message.
-            Instances.teleportPlayerIn(playerRef, instanceWorld)
-            context.sendMessage(Message.raw("Queued into '$gameTypeId'."))
+            // The scan must see the freshly created controller; if not, still
+            // register the queue WITHOUT teleporting them in — people move into
+            // the map when the game starts, never at queue time.
+            Instances.runOnWorld(instanceWorld) {
+                val controller = Instances.findController(instanceWorld) ?: return@runOnWorld
+                val tStore = instanceWorld.entityStore.store
+                val team = Teams.smallest(tStore, controller) ?: return@runOnWorld
+                val roster = tStore.getComponent(team.ref, TeamMembers.componentType)?.members ?: return@runOnWorld
+                if (playerRef.uuid !in roster) roster.add(playerRef.uuid)
+            }
+            InstanceRegistry.remember(playerRef.uuid, world.name)
+            Instances.markPendingEntry(store, ref, instanceWorld.name, Role.participant())
+            context.sendMessage(Message.raw(
+                "Queued into '$gameTypeId' — you'll be moved into the map when the game starts."))
             return
         }
         QueueFlow.queueInto(context, store, ref, playerRef, world, candidate)

@@ -34,6 +34,7 @@ class PlayerSet(
         return result
     }
 
+    /** Members whose role kind matches [role]'s — a disqualification reason on a SPECTATOR role still counts as spectator. */
     fun withRole(role: Role): List<Ref<EntityStore>> {
         val result = mutableListOf<Ref<EntityStore>>()
         val consumer = BiConsumer<ArchetypeChunk<EntityStore>, CommandBuffer<EntityStore>> { chunk, _ ->
@@ -41,7 +42,7 @@ class PlayerSet(
                 val inMinigame = chunk.getComponent(i, InMinigame.componentType) ?: continue
                 if (inMinigame.controllerRef == controllerRef) {
                     val entityRole = chunk.getComponent(i, Role.componentType) ?: continue
-                    if (entityRole == role) {
+                    if (entityRole.kind == role.kind) {
                         result.add(chunk.getReferenceTo(i))
                     }
                 }

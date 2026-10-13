@@ -27,7 +27,9 @@ object GameBehaviors {
     }
 
     private val factories = LinkedHashMap<String, Factory>()
-    private val hosts = mutableListOf<BehaviorHost>()
+
+    /** Activated and deactivated from different worlds' threads — copy-on-write keeps the list stable under concurrent mutation. */
+    private val hosts = java.util.concurrent.CopyOnWriteArrayList<BehaviorHost>()
 
     /** Wires the registry to the framework plugin's event registry (context events). */
     internal fun init(eventRegistry: EventRegistry) {

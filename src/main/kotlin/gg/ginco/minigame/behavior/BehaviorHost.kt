@@ -3,6 +3,7 @@ package gg.ginco.minigame.behavior
 import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.event.EventRegistry
+import com.hypixel.hytale.logger.HytaleLogger
 import com.hypixel.hytale.server.core.universe.world.World
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.Phase
@@ -23,6 +24,7 @@ class BehaviorHost internal constructor(
     behaviorIds: List<String>,
     eventRegistry: EventRegistry,
 ) {
+    private val LOGGER = HytaleLogger.forEnclosingClass()
     private val context = MinigameContext(world, store, controllerRef, gameTypeId, eventRegistry)
     private val active = mutableListOf<GameBehavior>()
     private var deactivated = false
@@ -34,19 +36,15 @@ class BehaviorHost internal constructor(
             val behavior = GameBehaviors.create(id, context)
             if (behavior != null) {
                 active.add(behavior)
-                println("[BehaviorDiag] host: created behavior $id")
             } else {
-                println("[BehaviorDiag] host: unknown behavior '$id' — skipping (known: ${GameBehaviors.ids()})")
+                LOGGER.atWarning().log("Unknown behavior '$id' — skipping (known: ${GameBehaviors.ids()})")
             }
         }
     }
 
     /** Activates every behavior this host was built with (idempotent). */
     fun activateAll() {
-        for (behavior in active) {
-            println("[BehaviorDiag] host: activating ${behavior.id}")
-            behavior.onActivate(context)
-        }
+        for (behavior in active) behavior.onActivate(context)
     }
 
     /** Deactivates every behavior (idempotent). */
@@ -55,7 +53,7 @@ class BehaviorHost internal constructor(
         deactivated = true
         for (behavior in active.asReversed()) {
             runCatching { behavior.onDeactivate(context) }
-                .onFailure { e -> println("[MinigameFramework] behavior ${behavior.id} deactivation failed: $e") }
+                .onFailure { e -> LOGGER.atSevere().withCause(e).log("Behavior ${behavior.id} deactivation failed") }
         }
         context.disposeEventListeners()
         active.clear()

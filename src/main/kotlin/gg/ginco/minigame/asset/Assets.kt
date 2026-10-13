@@ -11,6 +11,7 @@ import com.hypixel.hytale.codec.codecs.array.ArrayCodec
 import com.hypixel.hytale.codec.Codec
 import com.hypixel.hytale.codec.KeyedCodec
 import com.hypixel.hytale.codec.validation.Validators
+import com.hypixel.hytale.logger.HytaleLogger
 import com.hypixel.hytale.server.core.asset.HytaleAssetStore
 import com.hypixel.hytale.server.core.plugin.JavaPlugin
 import gg.ginco.minigame.definition.MinigameDefinition
@@ -42,6 +43,8 @@ import gg.ginco.minigame.definition.TeamDefinitionCodec
  * lacks the paths below (most packs do).
  */
 object MinigameAssets {
+    private val LOGGER = HytaleLogger.get("MinigameFramework")
+
     /** Pack-relative store paths (resolved under `<packRoot>/Server/`). */
     const val PATH_MINIGAMES = "Minigames"
     const val PATH_MAPS = "MinigameMaps"
@@ -94,7 +97,7 @@ object MinigameAssets {
         val definitions = ArrayList<MinigameDefinition>(games.size)
         for (game in games) {
             if (game.teams.isEmpty()) {
-                System.err.println("[MinigameFramework] minigame '${game.id}' declares no Teams — skipping")
+                LOGGER.atWarning().log("Minigame '${game.id}' declares no Teams — skipping")
                 continue
             }
 
@@ -103,11 +106,11 @@ object MinigameAssets {
             for (mapId in game.maps) {
                 val map = mapsById[mapId]
                 when {
-                    map == null -> System.err.println(
-                        "[MinigameFramework] minigame '${game.id}' lists unknown map '$mapId'")
+                    map == null -> LOGGER.atWarning().log(
+                        "Minigame '${game.id}' lists unknown map '$mapId'")
                     !InstancesPlugin.doesInstanceAssetExist(map.instance ?: "") ->
-                        System.err.println(
-                            "[MinigameFramework] minigame '${game.id}' lists map '$mapId' whose instance asset '${map.instance}' no asset pack provides")
+                        LOGGER.atWarning().log(
+                            "Minigame '${game.id}' lists map '$mapId' whose instance asset '${map.instance}' no asset pack provides")
                 }
             }
 

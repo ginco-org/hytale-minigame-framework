@@ -112,6 +112,13 @@ class PartyAcceptCommand : AbstractPlayerCommand("accept", "minigame.commands.pa
             context.sendMessage(Message.raw("You have no pending party invite."))
             return
         }
+        // Parties.accept refuses a member of another party; name the situation
+        // directly instead of letting the refusal read as a vanished invite.
+        if (Parties.partyOf(playerRef.uuid) != null) {
+            context.sendMessage(Message.raw(
+                "You are already in a party — leave yours first with /minigame party leave."))
+            return
+        }
         val party = Parties.accept(playerRef) ?: run {
             context.sendMessage(Message.raw("That party no longer exists."))
             return

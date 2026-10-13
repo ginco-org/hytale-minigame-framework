@@ -6,6 +6,7 @@ import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import com.hypixel.hytale.builtin.instances.InstancesPlugin
+import com.hypixel.hytale.logger.HytaleLogger
 import gg.ginco.minigame.asset.MinigameAssets
 import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.util.Teams
@@ -31,6 +32,8 @@ import java.nio.file.Path
  */
 object DefinitionStore {
 
+    private val LOGGER = HytaleLogger.get("MinigameFramework")
+
     private lateinit var dir: Path
     private val definitions = LinkedHashMap<String, MinigameDefinition>()
 
@@ -52,7 +55,7 @@ object DefinitionStore {
                     synchronized(definitions) { definitions[def.gameTypeId] = def }
                     count++
                 } catch (e: Exception) {
-                    System.err.println("[MinigameFramework] failed to load definition ${file.fileName}: ${e.message}")
+                    LOGGER.atWarning().withCause(e).log("Failed to load definition ${file.fileName}")
                 }
             }
         }
@@ -105,7 +108,22 @@ object DefinitionStore {
      *   map. A map is playable when its asset exists and its instance asset
      *   is provided by some pack.
      */
+    /**
+     * A game type id becomes a FILE NAME under the definitions (and lifetime
+     * stats) directories, so raw text may not escape them. Enforced here —
+     * the only entry raw ids take into the runtime (`create`/`queue` go
+     * through [resolve]) — and defensively in LifetimeStats.
+     */
+    internal fun isSafeGameTypeId(id: String): Boolean =
+        id.isNotEmpty() && !id.contains("..") && id != "." && id.none { it == '/' || it == '\\' }
+
     fun resolve(gameTypeId: String, mapId: String?): ResolvedMinigame {
+        if (!isSafeGameTypeId(gameTypeId)) {
+            return ResolvedMinigame.Failure(
+                gameTypeId,
+                "'$gameTypeId' is not a valid minigame id (it names the definition/stats files) — " +
+                    "use letters, digits, '-', '_' with no '/' or '..'.")
+        }
         val dataDirDef: MinigameDefinition? = synchronized(definitions) { definitions[gameTypeId] }
         val game = MinigameAssets.minigameById(gameTypeId)
         if (dataDirDef == null && game == null) {
@@ -245,6 +263,9 @@ object DefinitionStore {
 
     /** Persists [definition] to disk and the cache. */
     fun save(definition: MinigameDefinition) {
+        require(isSafeGameTypeId(definition.gameTypeId)) {
+            "Cannot save definition under unsafe file name '${definition.gameTypeId}'"
+        }
         synchronized(definitions) { definitions[definition.gameTypeId] = definition }
         val file = dir.resolve(definition.gameTypeId + ".json")
         Files.createDirectories(file.parent)
@@ -253,6 +274,7 @@ object DefinitionStore {
 
     /** Drops [gameTypeId] from the cache and from disk. Returns true when a file was deleted. */
     fun remove(gameTypeId: String): Boolean {
+        if (!isSafeGameTypeId(gameTypeId)) return false
         synchronized(definitions) { definitions.remove(gameTypeId) }
         return Files.deleteIfExists(dir.resolve(gameTypeId + ".json"))
     }

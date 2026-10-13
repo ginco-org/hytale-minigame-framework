@@ -6,6 +6,8 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.InstanceStats
+import gg.ginco.minigame.definition.DefinitionStore
+import com.hypixel.hytale.logger.HytaleLogger
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -34,6 +36,8 @@ import java.util.concurrent.ConcurrentHashMap
  * game type from parallel instance worlds serialize on the store object.
  */
 object LifetimeStats {
+
+    private val LOGGER = HytaleLogger.get("MinigameFramework")
 
     private lateinit var dir: Path
 
@@ -82,6 +86,9 @@ object LifetimeStats {
     private fun flushOnce(store: Store<EntityStore>, controllerRef: Ref<EntityStore>): Boolean {
         val gameTypeId = store.getComponent(controllerRef, ControllerComponent.componentType)?.gameTypeId
             ?: return false
+        // The id names a file under the stats directory — belt against ids that
+        // could escape it (DefinitionStore already refuses them at resolve time).
+        if (!DefinitionStore.isSafeGameTypeId(gameTypeId)) return false
         val stats = store.getComponent(controllerRef, InstanceStats.componentType) ?: return false
         val instanceId = store.getComponent(controllerRef, InstanceId.componentType)?.value ?: return false
 
@@ -103,23 +110,25 @@ object LifetimeStats {
         }
         if (deltaCounters.isEmpty() && deltaPlayers.isEmpty()) return false
 
-        // Build the merged ledger in FRESH local structures — never mutate the
-        // decoded file state (decoded maps may be immutable, and any throw on
-        // the world thread kills the tick thread).
-        val ledger = load(gameTypeId)
-        val countersOut = LinkedHashMap<String, Int>()
-        for ((stat, value) in ledger.counters) countersOut[stat] = value
-        for ((stat, delta) in deltaCounters) countersOut[stat] = (countersOut[stat] ?: 0) + delta
-        val playersOut = LinkedHashMap<String, MutableMap<String, Int>>()
-        for ((uuid, counters) in ledger.players.associate { it.uuid to it.counters }) {
-            playersOut[uuid] = LinkedHashMap(counters)
-        }
-        for ((uuid, counters) in deltaPlayers) {
-            val target = playersOut.getOrPut(uuid.toString()) { mutableMapOf() }
-            for ((stat, delta) in counters) target[stat] = (target[stat] ?: 0) + delta
-        }
-
+        // Lock over the WHOLE read-modify-write: two instance worlds flushing
+        // the same game type concurrently would otherwise each merge against
+        // the same stale ledger and the later write would clobber the earlier
+        // merge. The merged ledger is built in FRESH local structures — never
+        // mutate the decoded file state (decoded maps may be immutable, and
+        // any throw on the world thread kills the tick thread).
         synchronized(fileFor(gameTypeId).toAbsolutePath()) {
+            val ledger = load(gameTypeId)
+            val countersOut = LinkedHashMap<String, Int>()
+            for ((stat, value) in ledger.counters) countersOut[stat] = value
+            for ((stat, delta) in deltaCounters) countersOut[stat] = (countersOut[stat] ?: 0) + delta
+            val playersOut = LinkedHashMap<String, MutableMap<String, Int>>()
+            for ((uuid, counters) in ledger.players.associate { it.uuid to it.counters }) {
+                playersOut[uuid] = LinkedHashMap(counters)
+            }
+            for ((uuid, counters) in deltaPlayers) {
+                val target = playersOut.getOrPut(uuid.toString()) { mutableMapOf() }
+                for ((stat, delta) in counters) target[stat] = (target[stat] ?: 0) + delta
+            }
             write(
                 gameTypeId,
                 LifetimeStatsFile(
@@ -157,7 +166,7 @@ object LifetimeStats {
                     .toMutableList(),
             )
         } catch (e: Exception) {
-            System.err.println("[MinigameFramework] failed to load lifetime stats ${file.fileName}: ${e.message}")
+            LOGGER.atWarning().withCause(e).log("Failed to load lifetime stats ${file.fileName}")
             LifetimeStatsFile(gameTypeId = gameTypeId)
         }
     }

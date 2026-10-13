@@ -91,6 +91,15 @@ object Parties {
         val party = partyOf(inviterUuid) ?: return false
         if (!party.isLeader(inviterUuid)) return false
         if (memberIndex.containsKey(invitee.uuid)) return false
+        // A newer invite replaces an older one — drop the invitee from the
+        // PREVIOUS party's invited set too; only the inviteIndex moved before,
+        // so its `party list` kept them forever.
+        val previousPartyId = inviteIndex[invitee.uuid]
+        if (previousPartyId != null && previousPartyId != party.id) {
+            parties[previousPartyId]?.let { previous ->
+                synchronized(previous) { previous.invitedMut.remove(invitee.uuid) }
+            }
+        }
         synchronized(party) {
             party.invitedMut.add(invitee.uuid)
             party.names[invitee.uuid] = invitee.username
@@ -104,6 +113,11 @@ object Parties {
      * or null when they have none.
      */
     fun accept(playerRef: PlayerRef): Party? {
+        // An invitee who created their own party after being invited must not
+        // end up a member of both — the index overwrite below would strand
+        // their old party leaderless. The invitation stays standing (not
+        // consumed) so they can still accept it after leaving their party.
+        if (memberIndex.containsKey(playerRef.uuid)) return null
         val partyId = inviteIndex.remove(playerRef.uuid) ?: return null
         val party = parties[partyId] ?: return null
         synchronized(party) {

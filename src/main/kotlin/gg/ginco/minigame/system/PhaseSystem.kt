@@ -7,6 +7,7 @@ import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.component.RemoveReason
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.component.system.tick.TickingSystem
+import com.hypixel.hytale.logger.HytaleLogger
 import com.hypixel.hytale.server.core.Message
 import com.hypixel.hytale.server.core.universe.PlayerRef
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
@@ -16,9 +17,11 @@ import gg.ginco.minigame.component.TeamData
 import gg.ginco.minigame.component.TeamRef
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.Role
+import gg.ginco.minigame.event.PlayerLeftInstanceEvent
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import gg.ginco.minigame.command.MinigameCommand
 import gg.ginco.minigame.util.Instances
+import gg.ginco.minigame.util.Phases
 import gg.ginco.minigame.util.PlayerSet
 import gg.ginco.minigame.util.Regions
 import java.util.function.BiConsumer
@@ -46,6 +49,8 @@ import java.util.function.BiConsumer
  * writes are legal there.
  */
 class PhaseSystem : TickingSystem<EntityStore>() {
+
+    private val LOGGER = HytaleLogger.forEnclosingClass()
 
     override fun tick(dt: Float, systemIndex: Int, store: Store<EntityStore>) {
         val finished = mutableListOf<Ref<EntityStore>>()
@@ -105,6 +110,10 @@ class PhaseSystem : TickingSystem<EntityStore>() {
 
         for (ref in started) {
             teleportPlayersToSpawnPoints(store, ref)
+            // The Countdown→Playing swap went through the CommandBuffer inside
+            // the scan; dispatch the consumer-facing event post-scan, outside
+            // the processing lock, where listeners are allowed to write.
+            Phases.broadcast(ref, Phase.Kind.COUNTDOWN, Phase.Kind.PLAYING)
         }
 
         // Auto-start: a Waiting instance whose `minPlayers` floor is met moves
@@ -118,14 +127,24 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                     val controller = store.getComponent(ref, ControllerComponent.componentType)
                     val min = controller?.minPlayers ?: 0
                     if (min <= 0) continue
-                    val count = PlayerSet(store, ref).all().size
+                    // Queue-era headcount: roster uuids + present members. Queued
+                    // players are NOT in this store yet (they hop in when the
+                    // countdown starts), so a PlayerSet-only count reads 0 and
+                    // the min-players floor would never fire.
+                    val count = MinigameCommand.headcount(store, ref)
                     if (count < min) continue
                     val seconds = MinigameCommand.DEFAULT_COUNTDOWN_SECONDS
-                    store.replaceComponent(ref, Phase.componentType, Phase.countdown(seconds.toFloat()))
+                    Phases.set(store, ref, Phase.countdown(seconds.toFloat()))
                     PlayerSet(store, ref).sendMessage(Message.raw(
                         "Min players reached ($count/$min) — starting in ${seconds}s."))
+                    // The countdown just began — THIS is when queued players move
+                    // into the map world, not at queue time. The broadcast above
+                    // cannot reach them (their entities sit in other worlds), so
+                    // the notice rides along with the hop.
+                    Instances.teleportQueuedInto(store.externalData.world,
+                        "Min players reached ($count/$min) — starting in ${seconds}s.")
                 } catch (e: Exception) {
-                    println("[MinigameFramework] auto-start check failed for $ref: $e")
+                    LOGGER.atSevere().withCause(e).log("Auto-start check failed for $ref")
                 }
             }
         }
@@ -139,7 +158,7 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                 try {
                     gg.ginco.minigame.stats.LifetimeStats.flush(store, ref)
                 } catch (e: Exception) {
-                    println("[MinigameFramework] periodic stats flush failed for $ref: $e")
+                    LOGGER.atSevere().withCause(e).log("Periodic stats flush failed for $ref")
                 }
             }
         }
@@ -165,6 +184,15 @@ class PhaseSystem : TickingSystem<EntityStore>() {
 
             val players = PlayerSet(store, ref).all()
             for (player in players) {
+                val playerRef = store.getComponent(player, PlayerRef.getComponentType())
+                val role = store.getComponent(player, Role.componentType)
+                if (playerRef != null) {
+                    // Membership ends here (in-world teardown; the instance-world
+                    // path dispatches through Instances.endInstance instead). Role
+                    // and PlayerRef are read BEFORE the strip that follows.
+                    PlayerLeftInstanceEvent.dispatch(playerRef.uuid, playerRef.username, ref, role,
+                        player = playerRef, playerEntity = player)
+                }
                 store.removeComponentIfExists(player, InMinigame.componentType)
                 store.removeComponentIfExists(player, Role.componentType)
                 store.removeComponentIfExists(player, TeamRef.componentType)
@@ -190,7 +218,7 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                 // A throwing cleanup must never kill the world's ticking
                 // thread — that would strand every later world interaction
                 // with "thread not accepting tasks" and cascade across tests.
-                println("[MinigameFramework] instance cleanup failed for $ref: $e")
+                LOGGER.atSevere().withCause(e).log("Instance cleanup failed for $ref")
             }
         }
     }

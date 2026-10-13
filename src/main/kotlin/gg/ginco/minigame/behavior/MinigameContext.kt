@@ -64,7 +64,6 @@ class MinigameContext internal constructor(
     fun <E : Any> onEvent(eventClass: Class<E>, handler: (E) -> Unit) {
         check(!disposed) { "context already deactivated" }
         val registration = eventRegistry.register(eventClass) { event -> handler(event) }!!
-        println("[BehaviorDiag] ctx: listener registered for ${eventClass.simpleName}")
         unregistrars.add { runCatching { registration.unregister() } }
     }
 
@@ -81,6 +80,9 @@ class MinigameContext internal constructor(
     /** Runs [body] on the world thread after [ticks] (~50ms each). */
     fun runLater(ticks: Long, body: () -> Unit) {
         HytaleServer.SCHEDULED_EXECUTOR.schedule({
+            // Deactivated behavior: drop the task — it must not run with a
+            // disposed context.
+            if (disposed) return@schedule
             runOnWorld(body)
         }, ticks * 50L, TimeUnit.MILLISECONDS)
     }

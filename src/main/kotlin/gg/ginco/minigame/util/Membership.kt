@@ -12,6 +12,8 @@ import gg.ginco.minigame.component.PreservedMembers
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamMembers
 import gg.ginco.minigame.component.TeamRef
+import gg.ginco.minigame.event.PlayerJoinedInstanceEvent
+import gg.ginco.minigame.event.PlayerLeftInstanceEvent
 
 /**
  * Instance-membership lifecycle.
@@ -51,6 +53,13 @@ object Membership {
             val store = ref.store
             val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
                 ?: return@preserveAndAnnounce
+            // The role MUST be read on the player's own store thread, where the
+            // entity still exists at disconnect time: a cross-world member's
+            // entity is invisible to the controller's store (findByUuid there
+            // reads null), which is what recorded every preserved cross-world
+            // member as PARTICIPANT.
+            val role = PlayerSet.findByUuid(store, playerRef.uuid)
+                ?.let { store.getComponent(it, Role.componentType) }
             // A cross-world controller lives in another store: reading it from
             // here throws ("Incorrect store for entity reference"), so the
             // disconnect is deferred to that world's thread instead. Nothing is
@@ -58,13 +67,13 @@ object Membership {
             if (controllerRef.store !== store) {
                 val instanceWorld = controllerRef.store.externalData.world
                 Instances.runOnWorld(instanceWorld) {
-                    preservePresence(instanceWorld.entityStore.store, controllerRef, playerRef)
+                    preservePresence(instanceWorld.entityStore.store, controllerRef, playerRef, role)
                 }
                 return@preserveAndAnnounce
             }
             if (!controllerRef.isValid()) return@preserveAndAnnounce
 
-            preservePresence(store, controllerRef, playerRef)
+            preservePresence(store, controllerRef, playerRef, role)
         }
 
         if (world.isInThread()) {
@@ -78,20 +87,23 @@ object Membership {
      * Records [playerRef] as a preserved member of [controllerRef] and tells the
      * connected members. Must run on the store's thread, with both refs from it.
      */
-    private fun preservePresence(store: Store<EntityStore>, controllerRef: Ref<EntityStore>, playerRef: PlayerRef) {
+    private fun preservePresence(
+        store: Store<EntityStore>,
+        controllerRef: Ref<EntityStore>,
+        playerRef: PlayerRef,
+        role: Role? = null,
+    ) {
         if (!controllerRef.isValid()) return
 
-        // The role is read off the player's own entity, not the controller's.
-        val playerEntity = PlayerSet.findByUuid(store, playerRef.uuid)
-        val playerRole = playerEntity?.let { store.getComponent(it, Role.componentType) }
-
+        // [role] was captured on the player's own store thread back in
+        // handleDisconnect — the entity need not be visible from this store.
         val members = store.getComponent(controllerRef, PreservedMembers.componentType)?.members
             ?: mutableListOf<PreservedMember>().also {
                 store.addComponent(controllerRef, PreservedMembers.componentType, PreservedMembers(it))
             }
         if (members.none { it.uuid == playerRef.uuid }) {
             members.add(PreservedMember(playerRef.uuid, playerRef.username,
-                playerRole?.kind?.name ?: Role.Kind.PARTICIPANT.name, playerRole?.reason ?: ""))
+                role?.kind?.name ?: Role.Kind.PARTICIPANT.name, role?.reason ?: ""))
         }
 
         Membership.announce(store, controllerRef, Message.raw("${playerRef.username} disconnected."))
@@ -118,6 +130,10 @@ object Membership {
         store.getComponent(controllerRef, PreservedMembers.componentType)
             ?.members?.removeAll { it.uuid == uuid }
         Membership.announce(store, controllerRef, Message.raw("$username left the minigame."))
+        // Cross-world release: the player's entity lives in another world's
+        // store and is unreachable from here — the event carries uuid/username
+        // only (player/playerEntity stay null).
+        PlayerLeftInstanceEvent.dispatch(uuid, username, controllerRef, null)
     }
 
     /**
@@ -186,6 +202,7 @@ object Membership {
         // survive a disconnect) — catch it up on who is spectating.
         Roles.hideSpectatorsFrom(store, controllerRef, ref)
         preservedList.remove(entry)
+        PlayerJoinedInstanceEvent.dispatch(playerRef, ref, controllerRef, Role(roleKind, entry.reason))
         return true
     }
 
@@ -197,6 +214,7 @@ object Membership {
      */
     fun leave(store: Store<EntityStore>, ref: Ref<EntityStore>, playerRef: PlayerRef): Ref<EntityStore>? {
         val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
+        val role = store.getComponent(ref, Role.componentType)
 
         val teamRef = store.getComponent(ref, TeamRef.componentType)?.teamRef
         if (teamRef != null && teamRef.isValid()) {
@@ -210,6 +228,10 @@ object Membership {
         if (controllerRef != null && controllerRef.isValid()) {
             store.getComponent(controllerRef, PreservedMembers.componentType)
                 ?.members?.removeAll { it.uuid == playerRef.uuid }
+        }
+        if (controllerRef != null && controllerRef.isValid()) {
+            PlayerLeftInstanceEvent.dispatch(playerRef.uuid, playerRef.username, controllerRef, role,
+                player = playerRef, playerEntity = ref)
         }
         return controllerRef
     }

@@ -13,8 +13,9 @@ import gg.ginco.minigame.event.PhaseChangedEvent
  * server's event bus (old kind → new kind). Consumers — including game
  * behaviors — listen for these to drive play-only logic.
  *
- * The PhaseSystem itself writes via its CommandBuffer inside the scan and
- * dispatches its own transitions (Countdown → Playing) post-scan.
+ * The [PhaseSystem][gg.ginco.minigame.system.PhaseSystem] dispatches its own
+ * transitions through [broadcast] post-scan (Countdown → Playing) and its
+ * out-of-scan writes go through [set] (auto-start).
  */
 object Phases {
 
@@ -22,10 +23,20 @@ object Phases {
     fun set(store: Store<EntityStore>, ref: Ref<EntityStore>, phase: Phase) {
         val old = store.getComponent(ref, Phase.componentType)?.kind
         store.replaceComponent(ref, Phase.componentType, phase)
-        if (old != phase.kind) {
-            HytaleServer.get().eventBus
-                .dispatchFor(PhaseChangedEvent::class.java)
-                .dispatch(PhaseChangedEvent(ref, old ?: phase.kind, phase.kind))
-        }
+        broadcast(ref, old ?: phase.kind, phase.kind)
+    }
+
+    /**
+     * Dispatches [PhaseChangedEvent] for a transition whose component write
+     * already happened through another channel (e.g. a CommandBuffer scan —
+     * see [gg.ginco.minigame.system.PhaseSystem]). Always call post-scan:
+     * listeners run synchronously on the calling thread and must be allowed
+     * to write to the store.
+     */
+    fun broadcast(ref: Ref<EntityStore>, old: Phase.Kind, new: Phase.Kind) {
+        if (old == new) return
+        HytaleServer.get().eventBus
+            .dispatchFor(PhaseChangedEvent::class.java)
+            .dispatch(PhaseChangedEvent(ref, old, new))
     }
 }

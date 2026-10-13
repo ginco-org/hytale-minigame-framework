@@ -61,8 +61,7 @@ hytale {
 // built jar.
 val carrierJar: Path? by lazy {
     val dirs = listOf(
-        rootProject.file("../kotlin-for-hytale/build/libs"),   // CI sibling checkout
-        rootProject.file("/home/agent/projects/kotlin-for-hytale/build/libs")) // the machine's checkout
+        rootProject.file("../kotlin-for-hytale/build/libs")) // sibling checkout — CI and this workspace keep the same layout
     dirs.firstNotNullOfOrNull { dir ->
         dir.listFiles { f -> f.name.startsWith("kotlin-for-hytale-") && f.name.endsWith(".jar") }
             ?.maxByOrNull { it.name }?.toPath()
