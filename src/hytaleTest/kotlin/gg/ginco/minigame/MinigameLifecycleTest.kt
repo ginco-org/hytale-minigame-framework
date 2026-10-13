@@ -331,10 +331,16 @@ class MinigameLifecycleTest {
             "existing members should hear about new joins, got: ${alice.receivedMessages()}"
         )
 
+        // Queue switch: a joined member joining again leaves first and stays
+        // (one minigame at a time — the re-entered slot is a fresh one).
         bob.runCommand("minigame join").join()
         t.assertTrue(
-            bob.sawMessage("You are already in a minigame. Use /minigame leave first."),
-            "double join should be rejected with guidance, got: ${bob.receivedMessages()}"
+            alice.sawMessage("Bob left the minigame."),
+            "the switch should release the old membership first, got: ${alice.receivedMessages()}"
+        )
+        t.assertTrue(
+            alice.sawMessage("Bob joined the minigame."),
+            "the switch should re-announce the join, got: ${alice.receivedMessages()}"
         )
 
         alice.runCommand("minigame start --seconds=9").join()

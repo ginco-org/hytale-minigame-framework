@@ -31,7 +31,10 @@ Second vertical slice implemented:
 - `/minigame` command tree (admin commands gated to `hytale:Admin`):
   - `create <gametype>` — creates an instance with a per-boot numeric id (#1, #2, ...)
   - `start [--game=<id>] [--seconds=<secs>]` — starts all Waiting instances or one
-  - `stop [--game=<id>]` — forced stop with the default ending grace period
+  - `stop` — forced stop with the default ending grace period: bare or
+  `--game=<id>` inside the local world, `--asset=<asset>` for one asset's
+  instance worlds, and `--minigame=<gametype>` for every queue world of one
+  minigame (all admin-only; players are sent home by the teardown)
   - `status` — `#<id> gameType=... phase=... players=...` per instance
   - `join [--game=<id>]` — joins a specific instance or the lowest-id joinable
   - `leave`
@@ -49,11 +52,26 @@ Second vertical slice implemented:
     membership record (role included), so a returning player who runs
     `/minigame join` is restored into their exact instance, role and team.
     Voluntary `/minigame leave` still releases everything immediately
+  - `queue <minigame> [<map>]` — the player-facing join: enters an open
+    queue for that minigame (team-balanced; the first queuer spawns the map)
+    or spawns one; the queue auto-starts a countdown at the game's
+    `MinPlayers` floor (`PhaseSystem`), capped by `MaxPlayers`; queueing
+    elsewhere switches queues; `dequeue` leaves a pre-start queue (live
+    exits go through `leave`); `/minigame start` remains the admin
+    force-start that ignores floors
   - `defs list|reload|save [--game=<id>]` — durable minigame definitions:
     JSON in the plugin data directory (`definitions/<gameTypeId>.json`),
     loaded at boot; `defs save` captures a live instance's teams and markers
     (the in-game editor write path) and `create <gametype>` then spawns new
     instances fully set-up from the definition
+  - definitions also come from **asset packs**: the framework owns the
+    `Minigame` (teams, behaviors, maps) and `MinigameMap` (instance asset)
+    asset types under `Server/Minigames` and `Server/MinigameMaps` (see
+    `gg/ginco/minigame/asset/Assets.kt`). A minigame plugin bundles its own
+    asset pack (jar manifest `IncludesAssetPack: true`) and ships JSON — the
+    framework compiles one definition per minigame (data-dir definitions
+    shadow asset-derived ones per game type id). `/minigame create <minigame>
+    [<map>]` picks the map: named, or a random playable one when omitted
 
 ## Parties
 
@@ -127,10 +145,12 @@ eventRegistry.register(PlayerEnterRegionEvent::class.java) { e ->
 ```
 
 Region storage is the server's builtin **TriggerVolumes** module (no bespoke
-resource any more): `/minigame region add <type>` registers a box-shaped
-`VolumeEntry` tagged `minigame=<type>` in the world's `TriggerVolumeManager`,
-and the builtin's ticking system does the per-tick spatial crossing detection
-that the framework used to hand-roll. The framework's typed events are a thin
+resource, no framework commands). Builders author markers with the vanilla
+point/volume tools — a box-shaped `VolumeEntry` or a `PointEntry` tagged
+`minigame=<type>` in the world's `TriggerVolumeManager`/`PointManager` is all
+a region is — and the builtin's ticking system does the per-tick spatial
+crossing detection that the framework used to hand-roll. The programmatic
+path for tests/tools is `Regions.addRegion(world, type, …)`. The framework's typed events are a thin
 adapter over the builtin `TriggerVolumeEvent` (`system/RegionSystem.kt`), so
 consumers can also listen to `TriggerVolumeEvent` directly if they prefer the
 raw surface.

@@ -3,6 +3,7 @@ package gg.ginco.minigame
 import com.hypixel.hytale.server.core.plugin.JavaPlugin
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent
+import gg.ginco.minigame.asset.MinigameAssets
 import gg.ginco.minigame.command.MinigameCommand
 import gg.ginco.minigame.definition.DefinitionStore
 import gg.ginco.minigame.system.InstanceEntrySystem
@@ -29,6 +30,10 @@ class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
         eventRegistry.register(PlayerDisconnectEvent::class.java) { e ->
             Membership.handleDisconnect(e.playerRef)
         }
+        // Minigame/MinigameMap asset types (pack-relative Server/Minigames +
+        // Server/MinigameMaps): each minigame plugin's own bundled pack feeds
+        // them via AssetPackRegisterEvent after that plugin's setup0().
+        MinigameAssets.registerStores(this)
         logger.at(Level.INFO).log("MinigameFramework components and systems registered")
     }
 
@@ -37,8 +42,11 @@ class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
         val loaded = DefinitionStore.init(dataDirectory)
         gg.ginco.minigame.stats.LifetimeStats.init(dataDirectory)
         gg.ginco.minigame.behavior.GameBehaviors.init(eventRegistry)
+        // definitions() compiles the asset stores; assets are live by now —
+        // pack registration of the carrying jar(s) ran before start0().
+        val assetBacked = DefinitionStore.all().size
         logger.at(Level.INFO).log(
-            "MinigameFramework started — $loaded minigame definition(s) loaded")
+            "MinigameFramework started — $loaded data-dir + ${assetBacked - loaded} asset-derived minigame definition(s) loaded")
     }
 
     override fun shutdown() {

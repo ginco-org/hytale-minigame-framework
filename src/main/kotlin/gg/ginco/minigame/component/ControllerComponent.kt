@@ -10,13 +10,20 @@ import org.bson.BsonDocument
 class ControllerComponent(
     var gameTypeId: String = "",
     var config: BsonDocument? = null,
-    val teamRefs: MutableList<Ref<EntityStore>> = mutableListOf()
+    val teamRefs: MutableList<Ref<EntityStore>> = mutableListOf(),
+    /** Auto-start (and guard) floor: Waiting → Countdown once this many players
+     *  are in; `<= 0` disables auto-start (admin start only). */
+    var minPlayers: Int = 0,
+    /** Join cap: `<= 0` means uncapped; joins into a full instance are refused. */
+    var maxPlayers: Int = 0,
 ) : Component<EntityStore> {
 
     override fun clone(): ControllerComponent = ControllerComponent(
         gameTypeId,
         config?.clone(),
-        teamRefs.toMutableList()
+        teamRefs.toMutableList(),
+        minPlayers,
+        maxPlayers,
     )
 
     companion object {

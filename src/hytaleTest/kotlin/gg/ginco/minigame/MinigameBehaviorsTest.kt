@@ -84,7 +84,7 @@ class MinigameBehaviorsTest {
             behaviors = listOf("test-goal-counter"),
         ))
         val instanceId = createInstance(t, alice, "behavior-game")
-        alice.runCommand("minigame region add goal").join() // placed at her position
+        MinigameTestHarness.addRegionMarker(t, t.world, alice, "goal") // at her position ±2
         alice.runCommand("minigame join").join()
         alice.drainReceivedMessages()
 

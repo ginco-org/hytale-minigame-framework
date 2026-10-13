@@ -13,6 +13,7 @@ import gg.ginco.minigame.event.PlayerExitRegionEvent
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import gg.ginco.minigame.hytaletest.MinigameTestHarness
 import gg.ginco.minigame.hytaletest.Players
+import gg.ginco.minigame.util.Regions
 import gg.ginco.minigame.util.Roles
 import org.joml.Vector3d
 
@@ -25,7 +26,8 @@ import org.joml.Vector3d
  * `captureEvents` + `onEvent`), exactly where a real plugin would put it.
  *
  * Regions are world content: each test's world starts empty, markers are
- * placed with `/minigame region add <type>`, and events carry the marker's
+ * placed with `Regions.addRegion` (the full RegionCommand was retired — *
+ * builders author markers with the vanilla point/volume tools), and events carry the marker's
  * id + open type id.
  */
 class MinigameRegionEventsTest {
@@ -52,7 +54,7 @@ class MinigameRegionEventsTest {
         val enters = t.captureEvents(PlayerEnterRegionEvent::class.java)
         val exits = t.captureEvents(PlayerExitRegionEvent::class.java)
 
-        alice.runCommand("minigame region add goal").join()
+        MinigameTestHarness.addRegionMarkerAt(t, t.world, "goal", 40.0, 64.0, 40.0) // added around alice’s standing spot
 
         val world = t.world
         val goalId = t.runOnWorldReturning {
@@ -115,7 +117,7 @@ class MinigameRegionEventsTest {
 
         createInstance(t, alice, "arena")
         alice.teleport(15.0, 64.0, 15.0).join()
-        alice.runCommand("minigame region add hazard").join()
+        MinigameTestHarness.addRegionMarkerAt(t, t.world, "hazard", 15.0, 64.0, 15.0)
         alice.runCommand("minigame join").join()
 
         t.runOnWorld {
@@ -157,7 +159,7 @@ class MinigameRegionEventsTest {
 
         createInstance(t, alice, "arena")
         alice.teleport(-60.0, 64.0, -60.0).join()
-        alice.runCommand("minigame region add death").join()
+        MinigameTestHarness.addRegionMarker(t, t.world, alice, "death")
         alice.teleport(60.0, 64.0, 60.0).join() // stand OUTSIDE the zone pre-game
         alice.runCommand("minigame join").join()
         alice.runCommand("minigame start --seconds=1").join()
@@ -201,7 +203,7 @@ class MinigameRegionEventsTest {
         }
 
         createInstance(t, alice, "arena")
-        alice.runCommand("minigame region add goal").join() // added at world spawn
+        MinigameTestHarness.addRegionMarkerAt(t, t.world, "goal", 40.0, 64.0, 40.0) // added around alice’s standing spot // added at world spawn
         alice.runCommand("minigame join").join()
         alice.runCommand("minigame start --seconds=1").join()
         t.succeedWhen {
@@ -241,7 +243,7 @@ class MinigameRegionEventsTest {
         // irrelevant to the crossing. Registering after `region add` races
         // that first tick and can miss the only ENTER there will ever be.
         val enters = t.captureEvents(PlayerEnterRegionEvent::class.java)
-        alice.runCommand("minigame region add laser-base").join()
+MinigameTestHarness.addRegionMarkerAt(t, t.world, "laser-base", 5.0, 64.0, 5.0)
         alice.runCommand("minigame join").join()
         alice.drainReceivedMessages()
 
@@ -250,12 +252,11 @@ class MinigameRegionEventsTest {
             t.assertEquals("laser-base", enters.single().type, "the event should carry the plugin's own type id")
         }
 
-        alice.runCommand("minigame region list").join()
-        t.assertTrue(alice.sawMessage("laser-base at (5.0, 64.0, 5.0)"),
-            "list should show the custom marker, got: ${alice.receivedMessages()}")
-        alice.runCommand("minigame region clear --type=laser-base").join()
-        t.assertTrue(alice.sawMessage("Removed 1 laser-base marker(s)."),
-            "typed clear should work for custom ids, got: ${alice.receivedMessages()}")
+        t.assertEquals(1, t.runOnWorldReturning {
+            Regions.regionsOf(t.world, "laser-base").size
+        }, "the custom marker should be listable through the facade")
+        t.assertEquals(1, MinigameTestHarness.clearRegionMarkers(t, t.world, "laser-base"),
+            "typed clear should remove the custom marker")
         t.succeed()
     }
 }

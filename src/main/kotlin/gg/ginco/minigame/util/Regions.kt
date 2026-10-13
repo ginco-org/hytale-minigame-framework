@@ -151,22 +151,30 @@ object Regions {
     /**
      * Every spawn target in [world], from BOTH backends:
      *
-     * - **TriggerVolume** volumes tagged [TAG]=[SPAWN_TYPE] (the output of
+     * - **TriggerVolume** volumes tagged [TAG]=`spawn` (the output of
      *   `/minigame region add spawn`) carry a box; the target is its centre,
      *   with no facing.
-     * - **Point** entries tagged [TAG]=[SPAWN_TYPE] carry an explicit position
+     * - **Point** entries tagged [TAG]=`spawn` carry an explicit position
      *   and full rotation — the richer marker when a facing matters.
      *
      * Volumes first, then points, each by id, so player i -> target i % n is
      * stable across a world's lifetime.
+     *
+     * With [type], only markers tagged [TAG]=[type] are returned — the
+     * per-team convention is [spawnTypeFor]: team "Kweebecs" → its spawn
+     * markers are tagged `minigame: SPAWN_KWEEBECS`, so
+     * `spawnPointsOf(world, spawnTypeFor("Kweebecs"))` is exactly that
+     * team's pool. The generic pool ([SPAWN_TYPE]) is what players fall back
+     * to when their team has none (see `PhaseSystem`).
      */
-    fun spawnPointsOf(world: World): List<SpawnPoint> {
+    fun spawnPointsOf(world: World, type: String? = null): List<SpawnPoint> {
+        val effective = type ?: SPAWN_TYPE
         val out = mutableListOf<SpawnPoint>()
-        for (region in regionsOf(world, SPAWN_TYPE)) out.add(SpawnPoint(region.center(), null))
+        for (region in regionsOf(world, effective)) out.add(SpawnPoint(region.center(), null))
 
         val pointManager = world.entityStore.store.getResource(
             PointsPlugin.get().managerResourceType) ?: return out
-        pointManager.getPointsWithTags(TAG, SPAWN_TYPE)
+        pointManager.getPointsWithTags(TAG, effective)
             .sortedBy { it.id }
             .forEach { point ->
                 // PointEntry stores degrees; its transform hands back radians.
@@ -174,6 +182,14 @@ object Regions {
             }
         return out
     }
+
+    /**
+     * The spawn-marker type for [teamName] — `SPAWN_` + the uppercase team
+     * name ("Kweebecs" → `SPAWN_KWEEBECS`). Minigames author their per-team
+     * spawn points/images with this tag value; `PhaseSystem` resolves each
+     * player's pool from their team and falls back to the generic one.
+     */
+    fun spawnTypeFor(teamName: String): String = "SPAWN_" + teamName.uppercase()
 
     /** The name the builtin resolves `TriggerVolumeEvent.worldName` against, for [world]. */
     internal fun eventWorldName(world: World): String = world.name.lowercase()

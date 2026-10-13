@@ -19,7 +19,7 @@ plugins {
 }
 
 group = "gg.ginco"
-version = "0.2.0"
+version = "0.3.0"
 
 dependencies {
     // api (not implementation) so the published POM exposes codec as a
@@ -46,7 +46,7 @@ hytale {
     bundleDependencies = true
     name = "MinigameFramework"
     description = "Minigame framework for Hytale"
-    serverVersion = "0.6.8"
+    serverVersion = "0.7.0"
     mainClass = "gg.ginco.minigame.Plugin"
     // The carrier (kotlin-for-hytale) owns the Kotlin runtime server-wide;
     // bundling our own would fork the runtime identity per loader. Codec

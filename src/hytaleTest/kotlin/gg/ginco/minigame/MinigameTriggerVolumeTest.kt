@@ -20,7 +20,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * The region layer, after the refactor onto the server's builtin modules:
- * `/minigame region add` now creates a **TriggerVolume**, spawn markers can be
+ * Direct `Regions.addRegion` authoring now creates a **TriggerVolume**, spawn markers can be
  * **TriggerVolumes** or **Points**, and boundary crossings come from the
  * builtin's `TriggerVolumeEvent` (adapted back to the framework's typed events
  * by [gg.ginco.minigame.system.RegionSystem]).
@@ -43,7 +43,7 @@ class MinigameTriggerVolumeTest {
     }
 
     /**
-     * `/minigame region add <type>` stores a builtin TriggerVolume, tagged
+     * `Regions.addRegion(world, type, …)` stores a builtin TriggerVolume, tagged
      * `minigame=<type>` in that world's manager — the region is the builtin
      * manager's content now, not the framework's own chunk-store resource.
      */
@@ -52,7 +52,7 @@ class MinigameTriggerVolumeTest {
         val alice = player(t)
         createInstance(t, alice, "arena")
         alice.teleport(20.0, 64.0, 20.0).join()
-        alice.runCommand("minigame region add capture").join()
+        MinigameTestHarness.addRegionMarker(t, t.world, alice, "capture")
 
         val world = t.world
         t.runOnWorld {
@@ -85,7 +85,7 @@ class MinigameTriggerVolumeTest {
 
         createInstance(t, alice, "arena")
         alice.teleport(90.0, 64.0, 90.0).join()
-        alice.runCommand("minigame region add beacon").join()
+        MinigameTestHarness.addRegionMarker(t, t.world, alice, "beacon")
 
         t.assertEventually(30) {
             t.assertTrue(raw.any { it.volumeId.isNotEmpty() },
@@ -160,7 +160,7 @@ class MinigameTriggerVolumeTest {
         val world = t.world
 
         alice.teleport(30.0, 64.0, 30.0).join()
-        alice.runCommand("minigame region add spawn").join()
+        MinigameTestHarness.addRegionMarker(t, t.world, alice, "spawn")
 
         t.runOnWorld {
             val manager = world.entityStore.store
@@ -207,7 +207,7 @@ class MinigameTriggerVolumeTest {
     fun regionsSurviveInstanceEnd(t: HytaleTestHelper) {
         val alice = player(t)
         createInstance(t, alice, "arena")
-        alice.runCommand("minigame region add checkpoint").join()
+        MinigameTestHarness.addRegionMarker(t, t.world, alice, "checkpoint")
         val world = t.world
         t.assertEquals(1, t.runOnWorldReturning { Regions.regionsOf(world, "checkpoint").size },
             "region should exist before stop")
@@ -239,7 +239,7 @@ class MinigameTriggerVolumeTest {
         val alice = player(t)
         createInstance(t, alice, "arena")
         alice.teleport(45.0, 64.0, 45.0).join()
-        alice.runCommand("minigame region add door").join()
+        MinigameTestHarness.addRegionMarker(t, t.world, alice, "door")
         val world = t.world
 
         t.runOnWorld {

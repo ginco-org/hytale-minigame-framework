@@ -16,6 +16,7 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.util.Parties
 import gg.ginco.minigame.util.PlayerSet
 import java.util.function.BiConsumer
+import com.hypixel.hytale.server.core.permissions.provider.HytalePermissionsProvider
 
 /**
  * `/minigame party` — party lifecycle.
@@ -31,6 +32,8 @@ import java.util.function.BiConsumer
  */
 class PartyCommand : AbstractCommandCollection("party", "minigame.commands.party.desc") {
     init {
+        // Every party subcommand is player-facing.
+        setPermissionGroups(HytalePermissionsProvider.GROUP_ADVENTURER)
         addSubCommand(PartyCreateCommand())
         addSubCommand(PartyInviteCommand())
         addSubCommand(PartyAcceptCommand())

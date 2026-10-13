@@ -135,6 +135,8 @@ object Instances {
         returnPoint: Transform,
         gameTypeId: String,
         body: (store: Store<EntityStore>, controllerRef: Ref<EntityStore>, instanceWorld: World, id: Int) -> Unit,
+        minPlayers: Int = 0,
+        maxPlayers: Int = 0,
     ): World? {
         val instanceWorld = try {
             InstancesPlugin.get().spawnInstance(assetName, sourceWorld, returnPoint)
@@ -147,7 +149,7 @@ object Instances {
         return try {
             runOnWorld(instanceWorld) {
                 val id = InstanceId.allocate()
-                val ref = createController(instanceWorld.entityStore.store, gameTypeId, id)
+                val ref = createController(instanceWorld.entityStore.store, gameTypeId, id, minPlayers, maxPlayers)
                     ?: return@runOnWorld null
                 body(instanceWorld.entityStore.store, ref, instanceWorld, id.value)
                 instanceWorld
@@ -167,11 +169,16 @@ object Instances {
         store: Store<EntityStore>,
         gameTypeId: String,
         id: InstanceId,
+        minPlayers: Int = 0,
+        maxPlayers: Int = 0,
     ): Ref<EntityStore>? {
         val archetype = MinigameCommand.CONTROLLERS
         @Suppress("UNCHECKED_CAST")
         val components = arrayOfNulls<Component<EntityStore>>(archetype.length())
-        components[ControllerComponent.componentType.index] = ControllerComponent(gameTypeId = gameTypeId)
+        components[ControllerComponent.componentType.index] = ControllerComponent(
+            gameTypeId = gameTypeId,
+            minPlayers = minPlayers,
+            maxPlayers = maxPlayers)
         components[Phase.componentType.index] = Phase.waiting()
         components[InstanceId.componentType.index] = id
         val holder = store.registry.newHolder(archetype, components as Array<Component<EntityStore>>)

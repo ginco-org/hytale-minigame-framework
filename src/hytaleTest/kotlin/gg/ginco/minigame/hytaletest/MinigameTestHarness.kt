@@ -13,6 +13,8 @@ import com.hypixel.hytale.server.core.universe.world.World
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.hytest.runtime.api.HytaleTestHelper
 import gg.ginco.hytest.runtime.player.SimulatedPlayer
+import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
+import gg.ginco.minigame.util.Regions
 import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceId
@@ -54,6 +56,47 @@ object MinigameTestHarness {
     // ---- store access ------------------------------------------------------
 
     fun storeOf(world: World): Store<EntityStore> = world.entityStore.store
+
+    /**
+     * The vanilla-authoring equivalent of the retired `/minigame region add`:
+     * a ±[Regions.HALF_EXTENT]-box trigger volume tagged `minigame: <type>` at
+     * [p]'s current position, written through [Regions.addRegion] on [world]'s
+     * thread — the same content a builder's point/volume tools persist
+     * (TriggerVolumeData).
+     */
+    fun addRegionMarker(t: HytaleTestHelper, world: World, p: SimulatedPlayer, type: String) {
+        t.runOnWorld {
+            val transform = storeOf(world)
+                .getComponent(refOf(p.ref()), TransformComponent.getComponentType())!!
+            val pos = transform.position
+            val h = Regions.HALF_EXTENT
+            Regions.addRegion(
+                world, type,
+                pos.x - h, pos.y - h, pos.z - h,
+                pos.x + h, pos.y + h, pos.z + h,
+            )
+        }
+    }
+
+    /**
+     * Deterministic-position variant of [addRegionMarker]: the box is centered
+     * on explicit world coordinates, immune to a teleport whose transform
+     * update lands a tick after the teleport future resolves.
+     */
+    fun addRegionMarkerAt(t: HytaleTestHelper, world: World, type: String, x: Double, y: Double, z: Double) {
+        t.runOnWorld {
+            val h = Regions.HALF_EXTENT
+            Regions.addRegion(world, type, x - h, y - h, z - h, x + h, y + h, z + h)
+        }
+    }
+
+    /**
+     * The programmatic equivalent of the retired `/minigame region clear`:
+     * removes every framework region (all type ids) in [world]. Returns how
+     * many were removed.
+     */
+    fun clearRegionMarkers(t: HytaleTestHelper, world: World, type: String? = null): Int =
+        t.runOnWorldReturning { Regions.removeRegions(world, type) } ?: 0
 
     fun phaseOf(store: Store<EntityStore>, ref: Ref<EntityStore>): Phase? =
         store.getComponent(ref, Phase.componentType)

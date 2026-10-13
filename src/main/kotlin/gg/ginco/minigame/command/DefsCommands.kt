@@ -9,6 +9,7 @@ import com.hypixel.hytale.server.core.command.system.basecommands.AbstractWorldC
 import com.hypixel.hytale.server.core.universe.world.World
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.definition.DefinitionStore
+import com.hypixel.hytale.server.core.permissions.provider.HytalePermissionsProvider
 
 /**
  * `/minigame defs` — durable definition management (the editor save path).
@@ -21,6 +22,9 @@ import gg.ginco.minigame.definition.DefinitionStore
  */
 class DefsCommand : AbstractCommandCollection("defs", "minigame.commands.defs.desc") {
     init {
+        // `list` is player-readable (what can I queue?); reload/save override
+        // admin-only — they are the definition-editor write paths.
+        setPermissionGroups(HytalePermissionsProvider.GROUP_ADVENTURER)
         addSubCommand(DefsListCommand())
         addSubCommand(DefsReloadCommand())
         addSubCommand(DefsSaveCommand())
@@ -44,6 +48,10 @@ class DefsListCommand : AbstractWorldCommand("list", "minigame.commands.defs.lis
 
 class DefsReloadCommand : AbstractWorldCommand("reload", "minigame.commands.defs.reload.desc") {
 
+    init {
+        setPermissionGroups(HytalePermissionsProvider.GROUP_ADMIN)
+    }
+
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
         val count = DefinitionStore.loadAll()
         context.sendMessage(Message.raw("Reloaded $count minigame definition(s)."))
@@ -51,6 +59,10 @@ class DefsReloadCommand : AbstractWorldCommand("reload", "minigame.commands.defs
 }
 
 class DefsSaveCommand : AbstractWorldCommand("save", "minigame.commands.defs.save.desc") {
+
+    init {
+        setPermissionGroups(HytalePermissionsProvider.GROUP_ADMIN)
+    }
 
     private val gameArg = withOptionalArg("game", "minigame.commands.game.desc", ArgTypes.INTEGER)
 

@@ -7,16 +7,15 @@ import gg.ginco.jellyparty.codec.annotations.SerializableObject
  * its teams (and future rule data). Region markers are WORLD content
  * (chunk-store resource) and are not part of definitions.
  *
- * Definitions live as JSON in the plugin's data directory (`definitions/
- * <gameTypeId>.json`), are loaded at boot (and via `/minigame defs reload`),
- * and are written by `/minigame defs save` — the in-game editor write path:
- * configure an instance with markers and teams, save it, and every future
- * instance of that game type reproduces the setup.
+ * Definitions have two sources (see [DefinitionStore]): JSON in the
+ * framework's data directory (`definitions/<gameTypeId>.json` — editor save
+ * path, shadows asset-derived ids), and the framework-owned Minigame /
+ * MinigameMap asset types, which minigame plugins ship as data inside their
+ * own bundled asset packs (`gg.ginco.minigame.asset.Assets`).
  *
  * Serialization goes through the hytale-codec KSP processor (generated
  * `MinigameDefinitionCodec` in the companion) — the same codec stack the
- * server's asset pipeline uses, so moving the storage backend to a real
- * Hytale asset pack later only touches [DefinitionStore]'s file I/O.
+ * server's asset pipeline uses.
  */
 @SerializableObject
 data class MinigameDefinition(
@@ -30,6 +29,10 @@ data class MinigameDefinition(
     var instanceAsset: String = "",
     var teams: List<TeamDefinition> = emptyList(),
     var behaviors: List<String> = emptyList(),
+    /** Auto-start floor (Waiting → Countdown from this many players; <= 0 = manual only). */
+    var minPlayers: Int = 0,
+    /** Join cap (<= 0 = uncapped). */
+    var maxPlayers: Int = 0,
 )
 
 @SerializableObject

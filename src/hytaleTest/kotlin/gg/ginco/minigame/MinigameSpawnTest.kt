@@ -8,10 +8,12 @@ import gg.ginco.hytest.runtime.player.SimulatedPlayer
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.hytaletest.MinigameTestHarness
 import gg.ginco.minigame.hytaletest.Players
+import gg.ginco.minigame.util.Regions
 import org.joml.Vector3d
 
 /**
- * Integration tests for `/minigame region` spawn-point markers and the
+ * Integration tests for framework spawn-point markers (`Regions.SPAWN_TYPE`
+ * volumes authored the vanilla/programmatic way) and the
  * start-of-game teleport in [gg.ginco.minigame.system.PhaseSystem].
  *
  * Positions are read from the authoritative `TransformComponent` on the world
@@ -37,7 +39,7 @@ class MinigameSpawnTest {
 
     private fun spawnPointCount(t: HytaleTestHelper): Int =
         t.runOnWorldReturning {
-            gg.ginco.minigame.util.Regions.spawnPointsOf(t.world).size
+            Regions.spawnPointsOf(t.world).size
         }
 
     private fun near(actual: Vector3d, expected: Vector3d, tolerance: Double): Boolean {
@@ -45,25 +47,20 @@ class MinigameSpawnTest {
         return dx * dx + dy * dy + dz * dz <= tolerance * tolerance
     }
 
-    /** `region spawn` creates a marker whose box is centred on the admin's position. */
+    /** A spawn marker can be authored centred on a chosen position. */
     @HytaleTest(timeoutSeconds = 60)
-    fun regionSpawnCreatesMarkerAtPlayerPosition(t: HytaleTestHelper) {
+    fun spawnMarkerCreatedAtChosenPosition(t: HytaleTestHelper) {
         val alice = player(t)
         createInstance(t, alice, "arena")
-        alice.teleport(60.0, 64.0, 80.0).join()
-        alice.runCommand("minigame region add spawn").join()
+        MinigameTestHarness.addRegionMarkerAt(t, t.world, Regions.SPAWN_TYPE, 60.0, 64.0, 80.0)
 
         t.runOnWorld {
-            val store = MinigameTestHarness.storeOf(t.world)
-            val controller = MinigameTestHarness.controllerOfGameType(store, "arena")!!
-            val spawns = gg.ginco.minigame.util.Regions.regionsOf(t.world, gg.ginco.minigame.util.Regions.SPAWN_TYPE)
+            val spawns = Regions.regionsOf(t.world, Regions.SPAWN_TYPE)
             t.assertEquals(1, spawns.size, "exactly one marker should exist")
             val center = spawns.single().center()
             t.assertTrue(near(center, Vector3d(60.0, 64.0, 80.0), 0.5),
-                "marker centre should be the admin position, got $center")
+                "marker centre should be the authored position, got $center")
         }
-        t.assertTrue(alice.sawMessage(" at (60.0, 64.0, 80.0)."),
-            "create should confirm position, got: ${alice.receivedMessages()}")
         t.succeed()
     }
 
@@ -75,10 +72,8 @@ class MinigameSpawnTest {
         createInstance(t, alice, "arena")
 
         // Two markers at distinct spots (marker order == creation order).
-        alice.teleport(30.0, 64.0, 30.0).join()
-        alice.runCommand("minigame region add spawn").join()
-        alice.teleport(-30.0, 64.0, -30.0).join()
-        alice.runCommand("minigame region add spawn").join()
+        MinigameTestHarness.addRegionMarkerAt(t, t.world, Regions.SPAWN_TYPE, 30.0, 64.0, 30.0)
+        MinigameTestHarness.addRegionMarkerAt(t, t.world, Regions.SPAWN_TYPE, -30.0, 64.0, -30.0)
 
         alice.runCommand("minigame join").join()
         bob.runCommand("minigame join").join()
@@ -128,20 +123,18 @@ class MinigameSpawnTest {
         t.succeed()
     }
 
-    /** `region clear` removes every marker of the instance. */
+    /** Programmatic clear removes every region marker of the instance. */
     @HytaleTest(timeoutSeconds = 60)
-    fun regionClearRemovesSpawnPoints(t: HytaleTestHelper) {
+    fun clearRegionMarkersRemovesSpawnPoints(t: HytaleTestHelper) {
         val alice = player(t)
         createInstance(t, alice, "arena")
-        alice.runCommand("minigame region add spawn").join()
-        alice.teleport(10.0, 64.0, 10.0).join()
-        alice.runCommand("minigame region add spawn").join()
+        MinigameTestHarness.addRegionMarkerAt(t, t.world, Regions.SPAWN_TYPE, 0.0, 64.0, 0.0)
+        MinigameTestHarness.addRegionMarkerAt(t, t.world, Regions.SPAWN_TYPE, 10.0, 64.0, 10.0)
         t.assertEquals(2, spawnPointCount(t), "two markers should exist before clear")
 
-        alice.runCommand("minigame region clear").join()
+        val removed = MinigameTestHarness.clearRegionMarkers(t, t.world)
+        t.assertEquals(2, removed, "clear should report the count")
         t.assertEquals(0, spawnPointCount(t), "clear should remove all markers")
-        t.assertTrue(alice.sawMessage("Removed 2 marker(s)."),
-            "clear should report the count, got: ${alice.receivedMessages()}")
         t.succeed()
     }
 
@@ -150,7 +143,7 @@ class MinigameSpawnTest {
     fun markersPersistAfterInstanceEnd(t: HytaleTestHelper) {
         val alice = player(t)
         createInstance(t, alice, "arena")
-        alice.runCommand("minigame region add spawn").join()
+        MinigameTestHarness.addRegionMarker(t, t.world, alice, Regions.SPAWN_TYPE)
         t.assertEquals(1, spawnPointCount(t), "marker should exist before stop")
 
         alice.runCommand("minigame stop").join()

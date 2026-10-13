@@ -12,10 +12,12 @@ import com.hypixel.hytale.server.core.universe.PlayerRef
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
+import gg.ginco.minigame.component.TeamData
+import gg.ginco.minigame.component.TeamRef
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.Role
-import gg.ginco.minigame.component.TeamRef
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
+import gg.ginco.minigame.command.MinigameCommand
 import gg.ginco.minigame.util.Instances
 import gg.ginco.minigame.util.PlayerSet
 import gg.ginco.minigame.util.Regions
@@ -51,7 +53,12 @@ class PhaseSystem : TickingSystem<EntityStore>() {
         // Stats flush candidates — only collected on a due tick, so the scan
         // below stays free of extra work the other 199 ticks out of 200.
         val statsHolders = mutableListOf<Ref<EntityStore>>()
-        val flushDue = tickAndCheckFlushDue()
+        // Auto-start candidates — collected on the lighter check cadence; the
+        // actual player-count read happens post-scan, outside the lock.
+        val autoStartCandidates = mutableListOf<Ref<EntityStore>>()
+        val tick = tickCounter()
+        val flushDue = tick % FLUSH_INTERVAL_TICKS == 0
+        val autoCheckDue = tick % AUTO_START_CHECK_TICKS == 0
 
         val scanControllers = BiConsumer { chunk: ArchetypeChunk<EntityStore>, buffer: CommandBuffer<EntityStore> ->
             for (i in 0 until chunk.size()) {
@@ -85,7 +92,11 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                         }
                     }
 
-                    Phase.Kind.WAITING, Phase.Kind.CLEANUP -> {}
+                    Phase.Kind.WAITING -> {
+                        // Auto-start floor checks wait for the post-scan pass.
+                        if (autoCheckDue) autoStartCandidates.add(ref)
+                    }
+                    Phase.Kind.CLEANUP -> {}
                 }
             }
         }
@@ -94,6 +105,29 @@ class PhaseSystem : TickingSystem<EntityStore>() {
 
         for (ref in started) {
             teleportPlayersToSpawnPoints(store, ref)
+        }
+
+        // Auto-start: a Waiting instance whose `minPlayers` floor is met moves
+        // itself to a standard countdown — no admin needed. `minPlayers <= 0`
+        // never auto-starts (manual `/minigame start` only, and that works
+        // regardless of player count — it is the force-start override). Runs
+        // post-scan, outside the processing lock, so plain writes are legal.
+        if (autoCheckDue) {
+            for (ref in autoStartCandidates) {
+                try {
+                    val controller = store.getComponent(ref, ControllerComponent.componentType)
+                    val min = controller?.minPlayers ?: 0
+                    if (min <= 0) continue
+                    val count = PlayerSet(store, ref).all().size
+                    if (count < min) continue
+                    val seconds = MinigameCommand.DEFAULT_COUNTDOWN_SECONDS
+                    store.replaceComponent(ref, Phase.componentType, Phase.countdown(seconds.toFloat()))
+                    PlayerSet(store, ref).sendMessage(Message.raw(
+                        "Min players reached ($count/$min) — starting in ${seconds}s."))
+                } catch (e: Exception) {
+                    println("[MinigameFramework] auto-start check failed for $ref: $e")
+                }
+            }
         }
 
         // Periodic stats flush while the game is LIVE — a crash mid-game then
@@ -163,29 +197,40 @@ class PhaseSystem : TickingSystem<EntityStore>() {
 
     /**
      * Teleports the instance's players to its spawn-point markers when the
-     * game starts: player i goes to target `i % n` (volumes first, then
-     * points, each by id). With no markers players simply stay where they are.
-     * Runs after the scan, on the world thread, so direct [TransformComponent]
-     * mutation is legal.
+     * game starts. Each player goes to their **team's pool** — markers
+     * (volumes, then points, each by id) tagged `minigame: SPAWN_<TEAM>` — cycled
+     * `i % n` per pool; teams without their own pool draw from the generic
+     * `spawn` pool; with no markers at all players simply stay where they
+     * are. Runs after the scan, on the world thread, so direct
+     * [TransformComponent] mutation is legal.
      */
     private fun teleportPlayersToSpawnPoints(store: Store<EntityStore>, controllerRef: Ref<EntityStore>) {
         val world = store.externalData.world
-        val spawns = Regions.spawnPointsOf(world)
-        if (spawns.isEmpty()) return
-
+        var generic: List<Regions.SpawnPoint>? = null // memoized only if a team pool turns up empty
         val players = PlayerSet(store, controllerRef).all()
-        for ((index, player) in players.withIndex()) {
+        val cycle = HashMap<String, Int>() // pool key -> players served, so pools cycle independently
+        for (player in players) {
+            val teamName = store.getComponent(player, TeamRef.componentType)?.teamRef
+                ?.let { store.getComponent(it, TeamData.componentType)?.name }
+                ?.takeUnless { it.isEmpty() }
+            val poolKey = teamName?.let(Regions::spawnTypeFor) ?: ""
+            val spawns = teamName
+                ?.let { Regions.spawnPointsOf(world, Regions.spawnTypeFor(it)) }
+                ?.takeIf { it.isNotEmpty() }
+                ?: (generic ?: Regions.spawnPointsOf(world).also { generic = it })
+            if (spawns.isEmpty()) continue
+            val index = cycle.merge(poolKey, 1, Int::plus)!! - 1
             val target = spawns[index % spawns.size]
             val transform = store.getComponent(player, TransformComponent.getComponentType()) ?: continue
             target.applyTo(transform)
         }
     }
 
-    /** Advances this world's tick counter; true on flush-due ticks. */
-    private fun tickAndCheckFlushDue(): Boolean {
+    /** Advances this world's per-thread tick counter and returns the tick number. */
+    private fun tickCounter(): Int {
         val n = TICK_COUNTER.get() + 1
         TICK_COUNTER.set(n)
-        return n % FLUSH_INTERVAL_TICKS == 0
+        return n
     }
 
     companion object {
@@ -195,6 +240,13 @@ class PhaseSystem : TickingSystem<EntityStore>() {
          * temp+move write stays noise.
          */
         internal const val FLUSH_INTERVAL_TICKS = 200
+
+        /**
+         * Ticks between auto-start floor checks (10 = ~0.5s at 20 TPS): joins
+         * land via world-thread commands, a half-second start latency is
+         * imperceptible, and the count read stays rare in the tick budget.
+         */
+        internal const val AUTO_START_CHECK_TICKS = 10
 
         /**
          * One counter per WORLD THREAD: a single PhaseSystem instance is

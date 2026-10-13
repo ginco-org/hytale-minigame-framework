@@ -70,5 +70,28 @@ object Teams {
         name: String
     ): TeamSnapshot? = of(store, controllerRef).firstOrNull { it.data.name == name }
 
+    /**
+     * The join-default team: the **lightest** rostered team of [controllerRef]
+     * that still has room (`maxPlayers <= 0` means uncapped). Ties keep
+     * creation order — definition order — so sequential joins alternate
+     * deterministically and both sides fill up evenly. Null when the instance
+     * has no teams (players then join unteamed) or every team is full; a team
+     * without a roster component is skipped, never partially joined.
+     */
+    fun smallest(store: Store<EntityStore>, controllerRef: Ref<EntityStore>): TeamSnapshot? {
+        var best: TeamSnapshot? = null
+        var bestSize = Int.MAX_VALUE
+        for (team in of(store, controllerRef)) {
+            val roster = store.getComponent(team.ref, TeamMembers.componentType)?.members ?: continue
+            val max = team.data.maxPlayers
+            if (max > 0 && roster.size >= max) continue // full
+            if (roster.size < bestSize) {
+                best = team
+                bestSize = roster.size
+            }
+        }
+        return best
+    }
+
     data class TeamSnapshot(val ref: Ref<EntityStore>, val data: TeamData)
 }
