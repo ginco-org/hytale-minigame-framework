@@ -41,7 +41,7 @@ hytale {
     // kotlin-for-hytale is the server's single Kotlin runtime (see README
     // "Packaging"); our manifest demands it so the server refuses us when
     // the carrier is missing — and load order guarantees the runtime.
-    depends("gg.ginco:KotlinForHytale", ">=0.1.1")
+    depends("gg.ginco:KotlinForHytale", ">=0.1.2")
     group = "gg.ginco"
     bundleDependencies = true
     name = "MinigameFramework"
