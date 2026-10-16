@@ -231,7 +231,7 @@ repositories {
 }
 dependencies {
     implementation("gg.ginco:hytale-minigame-framework:0.4.0")   // compile-time
-    compileOnly("com.hypixel.hytale:Server:0.6.8")               // server API
+    compileOnly("com.hypixel.hytale:Server:0.7.2")               // server API
 }
 hytale {
     depends("gg.ginco:MinigameFramework", ">=0.4")               // runtime
@@ -257,7 +257,7 @@ A real two-plugin boot (framework thin-consumer) is documented in
 
 ## Testing
 
-Integration tests run inside a real, authenticated Hytale server (0.6.8) via the
+Integration tests run inside a real, authenticated Hytale server (0.7.2) via the
 [`hytest`](https://github.com/ginco-org/hytest) harness, consumed from Maven
 Central (`gg.ginco.hytest:<gradle-plugin|runtime|junit5>`): `settings.gradle.kts`
 resolves the plugin via `mavenCentral()`, `build.gradle.kts` applies

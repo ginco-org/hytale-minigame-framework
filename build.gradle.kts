@@ -46,7 +46,7 @@ hytale {
     bundleDependencies = true
     name = "MinigameFramework"
     description = "Minigame framework for Hytale"
-    serverVersion = "0.7.0"
+    serverVersion = "0.7.2"
     mainClass = "gg.ginco.minigame.Plugin"
     // The carrier (kotlin-for-hytale) owns the Kotlin runtime server-wide;
     // bundling our own would fork the runtime identity per loader. Codec

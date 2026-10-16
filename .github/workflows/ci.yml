@@ -113,9 +113,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.gradle/caches/hygradle/server
-          key: hytale-server-0.7.0-${{ github.run_id }}
+          key: hytale-server-0.7.2-${{ github.run_id }}
           restore-keys: |
-            hytale-server-0.7.0-
+            hytale-server-0.7.2-
             hytale-server-
       # Save even when the suite fails — otherwise every red run also pays
       # the 3.3GB authenticated download again.
@@ -124,7 +124,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.gradle/caches/hygradle/server
-          key: hytale-server-0.7.0-${{ github.run_id }}
+          key: hytale-server-0.7.2-${{ github.run_id }}
       - name: Check for Hytale token secret
         id: token
         env:
