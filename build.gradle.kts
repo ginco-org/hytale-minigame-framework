@@ -3,7 +3,7 @@ import java.nio.file.Path
 import org.gradle.api.Task
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
 plugins {
-    // hygradle comes onto the classpath via gg.ginco.hygradle.settings (0.7.0) in
+    // hygradle comes onto the classpath via gg.ginco.hygradle.settings (0.7.1) in
     // settings.gradle.kts, so no version is declared here.
     id("gg.ginco.hygradle")
     kotlin("jvm") version "2.3.20"
