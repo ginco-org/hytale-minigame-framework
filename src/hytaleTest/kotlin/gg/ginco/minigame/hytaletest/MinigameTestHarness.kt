@@ -214,6 +214,54 @@ object MinigameTestHarness {
         )
     }
 
+    /**
+     * Publishes a MINIGAME asset playing on several maps — the shape
+     * `/minigame queue <game>` rolls a random map from, and the shape under
+     * which a naive "join a queue of the rolled map" implementation forks one
+     * queue per roll (the multi-account bug this pins). One
+     * `Server/MinigameMaps/<mapId>.json` per entry points at the instance
+     * asset each map is played in; the game JSON uses the codec field names
+     * of [gg.ginco.minigame.asset.MinigameAsset.CODEC] (asset id = file
+     * name, exactly like the shipped stk.json). The instance assets
+     * themselves come from [createInstanceAsset] — call this AFTER those,
+     * and [removeAssetPack] on the returned handle when done.
+     */
+    fun createGameAsset(
+        gameId: String,
+        maps: List<Pair<String, String>>,
+        teams: List<String> = emptyList(),
+        defaultMap: String? = null,
+    ): InstanceAsset {
+        val root = java.nio.file.Files.createTempDirectory("minigame-test-game")
+        val gameDir = root.resolve("Server").resolve(gg.ginco.minigame.asset.MinigameAssets.PATH_MINIGAMES).resolve(gameId)
+        val mapsDir = root.resolve("Server").resolve(gg.ginco.minigame.asset.MinigameAssets.PATH_MAPS)
+        java.nio.file.Files.createDirectories(gameDir)
+        java.nio.file.Files.createDirectories(mapsDir)
+        val teamJson = teams.joinToString(",") { """{"Name": "$it"}""" }
+        java.nio.file.Files.writeString(
+            gameDir.resolve("$gameId.json"),
+            """
+            {
+              "DisplayName": "$gameId",
+              ${defaultMap?.let { "\"DefaultMap\": \"$it\"," } ?: ""}
+              "Maps": [${maps.joinToString(",") { "\"${it.first}\"" }}],
+              "Teams": [$teamJson]
+            }
+            """.trimIndent(),
+        )
+        for ((mapId, instance) in maps) {
+            java.nio.file.Files.writeString(
+                mapsDir.resolve("$mapId.json"),
+                """{ "DisplayName": "$mapId", "Instance": "$instance" }""",
+            )
+        }
+        val packId = "gg.ginco:MinigameTestGame-$gameId"
+        com.hypixel.hytale.server.core.asset.AssetModule.get().registerPack(
+            packId, root, com.hypixel.hytale.common.plugin.PluginManifest(),
+            com.hypixel.hytale.assetstore.AssetPack.PackSource.RUNTIME)
+        return InstanceAsset(gameId, packId, root)
+    }
+
     /** The instance world whose InstanceWorldConfig names [assetName], or null. */
     fun instanceWorldOf(assetName: String): World? =
         gg.ginco.minigame.util.Instances.instanceWorlds()

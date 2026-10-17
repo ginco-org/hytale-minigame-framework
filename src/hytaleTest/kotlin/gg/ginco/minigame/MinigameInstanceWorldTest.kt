@@ -288,6 +288,189 @@ class MinigameInstanceWorldTest {
         }
     }
 
+    /**
+     * A queued player controls their own queue with BARE commands from the
+     * lobby. A player sits in at most one minigame (or queue thereof), so
+     * `start`/`status` with no --asset resolve to their queue's instance —
+     * which lives in its own world, invisible to the lobby store (that
+     * invisibility is exactly why bare `start` used to answer "No instances
+     * in Waiting phase"). The bare start also hops the queuer in, since the
+     * queue no longer teleports at queue time (QueueFlow.queueInto), and the
+     * instance world's own PhaseSystem carries Countdown into Playing.
+     */
+    @HytaleTest(timeoutSeconds = 180)
+    fun queuedPlayerBareCommandsResolveToOwnInstance(t: HytaleTestHelper) {
+        try {
+            val lobby = t.world
+            val unique = scope(t, "queue")
+            DefinitionStore.save(
+                MinigameDefinition(gameTypeId = gameTypeId!!, instanceAsset = unique,
+                    teams = listOf(TeamDefinition(name = "red"), TeamDefinition(name = "blue"))))
+
+            // First queuer pays the spawn: the queue's instance world appears,
+            // and the queuer STAYS in the lobby with a pending-entry marker.
+            val alice = player(t, "Alice")
+            alice.runCommand("minigame queue ${gameTypeId!!}").join()
+            val world = awaitInstanceWorld(t, unique)
+            this.world = world
+
+            t.assertEventually(30) {
+                t.assertEquals(lobby.entityStore.store, alice.ref().reference?.store,
+                    "queuing must not teleport the player out of the lobby")
+            }
+
+            // Bare status must reach across worlds without stalling: its hop to
+            // the queue's world runs on that world's own thread (a hop-and-wait
+            // FROM the instance world's command would deadlock, a lobby caller
+            // is the supported shape — see instanceWorldLifecycleRunsInItsOwnWorld).
+            alice.runCommand("minigame status").join()
+
+            // Bare start: Waiting -> Countdown in the queue's own world and the
+            // queue hopped in — from the lobby, with no --asset named.
+            alice.runCommand("minigame start").join()
+            val gameType = gameTypeId!!
+            t.assertEventually(30) {
+                val phase = onInstanceWorld(world) {
+                    val store = world.entityStore.store
+                    MinigameTestHarness.phaseOf(store, Instances.findController(world, gameType)!!)
+                }
+                t.assertEquals(Phase.Kind.PLAYING, phase?.kind,
+                    "the bare start should countdown the sender's own queue's instance, got $phase")
+            }
+            t.assertEventually(30) {
+                t.assertEquals(world.entityStore.store, alice.ref().reference?.store,
+                    "the queuer should have been hopped into the map at countdown start")
+            }
+            t.succeed()
+        } finally {
+            cleanup()
+        }
+    }
+
+    /**
+     * `/minigame list` is the whole-board view the lobby store cannot give by
+     * itself: bare `list` names the playable catalog (the definition this test
+     * saves), and `list instances` reaches into the instance world — unlike
+     * `status`, it is not scoped to the caller's world or their own queue.
+     * The usage-variant dispatch (bare = catalog, one positional word =
+     * section) is itself under test: bare `list` must execute the catalog
+     * rather than print a collection's usage message.
+     */
+    @HytaleTest(timeoutSeconds = 120)
+    fun listShowsCatalogAndInstancesAcrossWorlds(t: HytaleTestHelper) {
+        try {
+            val instanceWorld = setupInstance(t, "catalog", listOf("red", "blue"))
+            val alice = creator!!
+
+            alice.runCommand("minigame list").join()
+            t.assertTrue(alice.sawMessage(gameTypeId!!),
+                "bare `list` should name the catalog entry '${gameTypeId}'")
+            t.assertFalse(alice.sawMessage("Unknown list section"),
+                "bare `list` must execute the catalog, not fall through to the section variant")
+
+            alice.runCommand("minigame list instances").join()
+            t.assertTrue(alice.sawMessage("gameType=${gameTypeId!!}"),
+                "`list instances` should show the instance across worlds")
+            t.assertTrue(alice.sawMessage(instanceWorld.name),
+                "`list instances` should name the instance world '${instanceWorld.name}'")
+
+            alice.runCommand("minigame list bogus").join()
+            t.assertTrue(alice.sawMessage("Unknown list section 'bogus'"),
+                "an unknown section should be refused by name")
+            t.succeed()
+        } finally {
+            cleanup()
+        }
+    }
+
+    /**
+     * Two accounts queueing the same MULTI-MAP minigame must land in the SAME
+     * queue. The map roll happens per command (`DefinitionStore.resolve` picks
+     * a random playable map when none is named) — joining keyed on the rolled
+     * map forks one queue per roll: the reported bug queued acc 1 into canyon's
+     * instance #1 while acc 2 got a trork-fort instance #2, both stranded
+     * below the min-players floor. The fix joins ANY open queue of the game
+     * type when no map was named. Also pins the lobby `status` reply for a
+     * queued sender: their queue's line, never "No minigame instances."
+     */
+    @HytaleTest(timeoutSeconds = 180)
+    fun secondQueuerJoinsTheExistingQueueNotAFreshMap(t: HytaleTestHelper) {
+        val n = next++
+        val a = MinigameTestHarness.createInstanceAsset("forkA-$n")
+        val b = MinigameTestHarness.createInstanceAsset("forkB-$n")
+        val game = MinigameTestHarness.createGameAsset(
+            "forkgame-$n",
+            maps = listOf("mapA-$n" to a.name, "mapB-$n" to b.name),
+            teams = listOf("red", "blue"),
+            defaultMap = "mapA-$n",
+        )
+        try {
+            // First queuer: spawns the queue world on a random roll.
+            val alice = player(t, "Alice")
+            alice.runCommand("minigame queue ${game.name}").join()
+            var world: World? = null
+            t.assertEventually(60) {
+                world = MinigameTestHarness.instanceWorldOf(a.name)
+                    ?: MinigameTestHarness.instanceWorldOf(b.name)
+                t.assertNotNull(world, "the first queuer's instance world should be loaded")
+            }
+            val first = world!!
+
+            // Second queuer on the OTHER map's roll: must join the existing
+            // queue, not spawn a parallel one.
+            val bob = player(t, "Bob")
+            bob.runCommand("minigame queue ${game.name}").join()
+
+            t.assertEventually(30) {
+                val forks = listOf(a.name, b.name).count { asset ->
+                    MinigameTestHarness.instanceWorldOf(asset) != null
+                }
+                t.assertEquals(1, forks,
+                    "both queuers must share one queue world, found $forks (a='${a.name}', b='${b.name}')")
+            }
+            val lobby = t.world
+            t.assertEventually(30) {
+                t.assertEquals(lobby.entityStore.store, bob.ref().reference?.store,
+                    "queuing must not teleport the second queuer out of the lobby")
+            }
+            t.runOnWorld {
+                val bobRef = bob.ref().reference
+                    ?: throw AssertionError("bob should have an entity in the lobby")
+                val entry = MinigameTestHarness.storeOf(lobby)
+                    .getComponent(bobRef, gg.ginco.minigame.component.PendingInstanceEntry.componentType)
+                t.assertNotNull(entry, "the second queuer should carry a pending-entry marker")
+                t.assertEquals(first.name, entry?.worldName,
+                    "the second queuer's marker must name the FIRST queue's world")
+            }
+
+            // The queue-less-in-lobby gap that motivated the command: a queued
+            // sender's `status` shows their queue across worlds. The world
+            // name here is MIXED CASE on purpose — that is the shape that made
+            // `Instances.worldByName` miss (Universe keys are case-folded),
+            // which read a live queue as vanished and emptied `status`.
+            alice.runCommand("minigame status").join()
+            t.assertTrue(alice.sawMessage("gameType=${game.name}"),
+                "`status` while queued should show the sender's queue line, got: ${alice.receivedMessages()}")
+
+            t.succeed()
+        } finally {
+            runCatching {
+                for (asset in listOf(a.name, b.name)) {
+                    MinigameTestHarness.instanceWorldOf(asset)?.let { w ->
+                        Instances.runOnWorld(w) {
+                            Instances.findController(w)?.let { Instances.endInstance(w, it) }
+                        }
+                    }
+                    MinigameTestHarness.awaitInstanceWorldGone(asset)
+                }
+            }
+            runCatching { MinigameTestHarness.removeAssetPack(a) }
+            runCatching { MinigameTestHarness.removeAssetPack(b) }
+            runCatching { MinigameTestHarness.removeAssetPack(game) }
+            InstanceRegistry.clear()
+        }
+    }
+
     /** Two creates of one game type yield two distinct worlds (the world key is per spawn). */
     @HytaleTest(timeoutSeconds = 120)
     fun eachCreateSpawnsItsOwnWorld(t: HytaleTestHelper) {

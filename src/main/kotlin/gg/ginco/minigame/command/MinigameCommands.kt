@@ -26,6 +26,7 @@ import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.EndReason
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceId
+import gg.ginco.minigame.component.PendingInstanceEntry
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.PreservedMembers
 import gg.ginco.minigame.component.Role
@@ -71,9 +72,14 @@ import java.util.function.BiConsumer
  * /minigame join --game=2   (player) -> join instance #2 specifically
  * /minigame start --seconds=<secs>   (admin) -> all Waiting -> Countdown -> (PhaseSystem) -> Playing
  * /minigame start --game=1 --seconds=7 (admin) -> only instance #1
+ *      (bare start/status/stop from a QUEUED sender mean their own queue's
+ *      instance — a player is in at most one, so it is unambiguous — which
+ *      lives in its own world, unreachable from the lobby store)
  * /minigame stop [--minigame=<g>]    (admin) -> end every queue world of one minigame
  * /minigame stop [--game=<id>]       (admin) -> Ending(FORCED) -> (PhaseSystem) cleanup
- * /minigame status          (anyone) -> list instances
+ * /minigame status          (anyone) -> list instances (+ the sender's queue's instance)
+ * /minigame list            (anyone) -> every minigame that can be queued or created
+ * /minigame list instances  (anyone) -> every live instance in every world
  * /minigame leave           (player)
  * ```
  *
@@ -98,6 +104,7 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
         addSubCommand(StartCommand())
         addSubCommand(StopCommand())
         addSubCommand(StatusCommand())
+        addSubCommand(ListCommand())
         addSubCommand(JoinCommand())
         addSubCommand(LeaveCommand())
         addSubCommand(TeamCommand())
@@ -168,6 +175,39 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
         /** Reads the shared `--game=<id>` optional arg; null when the caller did not restrict the target. */
         fun targetInstance(context: CommandContext, gameArg: Argument<*, Int>): Int? =
             if (context.provided(gameArg)) context.get(gameArg) else null
+
+        /**
+         * The command sender's own queue's instance world, resolved across
+         * worlds: a player sits in at most one minigame (or its queue), so the
+         * [PendingInstanceEntry] on their entity names it unambiguously. Null
+         * for console senders, players with no queue link, and a queue world
+         * that has since been torn down. Members standing INSIDE their
+         * instance resolve world-locally instead — the controller is already
+         * in the caller's store.
+         */
+        fun ownQueueWorld(context: CommandContext, store: Store<EntityStore>): World? {
+            val sender = context.senderAsPlayerRef() ?: return null
+            val pending = store.getComponent(sender, PendingInstanceEntry.componentType) ?: return null
+            return Instances.worldByName(pending.worldName)
+        }
+
+        /** One `status`/`list instances` line: id, game type, phase, reachable players, optional suffix. */
+        internal fun instanceLine(
+            store: Store<EntityStore>,
+            instance: InstanceSnapshot,
+            suffix: String,
+        ): String = "#${instance.id} gameType=${controllerGameType(store, instance.ref)} " +
+            "phase=${describePhase(instance.phase)} players=${headcount(store, instance.ref)}$suffix"
+
+        internal fun describePhase(phase: Phase): String = when (phase.kind) {
+            Phase.Kind.COUNTDOWN -> "Countdown(${phase.seconds.toInt()}s)"
+            Phase.Kind.PLAYING -> "Playing(${phase.seconds.toInt()}s)"
+            Phase.Kind.ENDING -> "Ending(${phase.reason}, ${phase.seconds.toInt()}s)"
+            else -> phase.kind.name.lowercase().replaceFirstChar { it.uppercase() }
+        }
+
+        internal fun controllerGameType(store: Store<EntityStore>, ref: Ref<EntityStore>): String =
+            store.getComponent(ref, ControllerComponent.componentType)?.gameTypeId ?: "?"
 
         /**
          * The instance's seat accounting: every roster uuid + present member —
@@ -368,6 +408,17 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
             return
         }
 
+        // Self-resolution: a player sits in at most one minigame (or its queue),
+        // so a queued sender with no explicit target means THEIR queue — whose
+        // world this store cannot see (the same reason the asset path exists).
+        if (targetId == null) {
+            val ownWorld = MinigameCommand.ownQueueWorld(context, store)
+            if (ownWorld != null && ownWorld !== world) {
+                startOwnQueueWorld(context, ownWorld, countdownSeconds)
+                return
+            }
+        }
+
         // Scan first, mutate after: store writes are illegal while forEachChunk
         // holds the processing lock ("Store is currently processing"), and any
         // throw here is swallowed by the async-command wrapper (logged only).
@@ -410,6 +461,32 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
         context.sendMessage(
             if (started > 0) Message.raw("Started $started instance(s) of '$asset' — $countdownSeconds s countdown.")
             else Message.raw("No waiting instances of '$asset' are running.")
+        )
+    }
+
+    /**
+     * Force-starts the sender's own queued instance in its own world: Waiting
+     * -> Countdown there, the queue hopped in. The sender is one of the
+     * queuers, so [Instances.teleportQueuedInto] brings them in with the rest
+     * (same flow as the asset path — see QueueFlow.queueInto: no teleport at
+     * queue time, the hop belongs to the countdown start).
+     */
+    private fun startOwnQueueWorld(context: CommandContext, ownWorld: World, countdownSeconds: Float) {
+        val started = Instances.runOnWorld(ownWorld) {
+            val ownStore = ownWorld.entityStore.store
+            val waiting = MinigameCommand.snapshot(ownStore).filter { it.phase.kind == Phase.Kind.WAITING }
+            for (instance in waiting) {
+                Phases.set(ownStore, instance.ref, Phase.countdown(countdownSeconds))
+            }
+            if (waiting.isNotEmpty()) {
+                Instances.teleportQueuedInto(ownWorld,
+                    "Your minigame is starting in $countdownSeconds s — moving you into the map now.")
+            }
+            waiting.size
+        }
+        context.sendMessage(
+            if (started > 0) Message.raw("Started your minigame (world '${ownWorld.name}') — $countdownSeconds s countdown.")
+            else Message.raw("Your minigame is not waiting in world '${ownWorld.name}' (already running?).")
         )
     }
 
@@ -479,6 +556,19 @@ class StopCommand : AbstractWorldCommand("stop", "minigame.commands.stop.desc") 
 
         val targetId = MinigameCommand.targetInstance(context, gameArg)
 
+        // Self-resolution: with no explicit target, a queued sender means THEIR
+        // minigame — its world is invisible from the lobby (see StartCommand).
+        if (targetId == null) {
+            val ownWorld = MinigameCommand.ownQueueWorld(context, store)
+            if (ownWorld != null && ownWorld !== world) {
+                Instances.runOnWorld(ownWorld) {
+                    Instances.findController(ownWorld)?.let { Instances.endInstance(ownWorld, it) }
+                }
+                context.sendMessage(Message.raw("Stopped your minigame (world '${ownWorld.name}') — everyone was sent home."))
+                return
+            }
+        }
+
         // Scan first, mutate after (see StartCommand — store writes are illegal
         // inside the forEachChunk processing window).
         val targets = MinigameCommand.snapshot(store).filter { it.isLive && (targetId == null || it.id == targetId) }
@@ -523,9 +613,19 @@ class StopCommand : AbstractWorldCommand("stop", "minigame.commands.stop.desc") 
 class StatusCommand : AbstractWorldCommand("status", "minigame.commands.status.desc") {
 
     override fun execute(context: CommandContext, world: World, store: Store<EntityStore>) {
-        val lines = MinigameCommand.snapshot(store).map { instance ->
-            val players = MinigameCommand.headcount(store, instance.ref)
-            "#${instance.id} gameType=${gameTypeOf(store, instance.ref)} phase=${describe(instance.phase)} players=$players"
+        val lines = MinigameCommand.snapshot(store)
+            .map { MinigameCommand.instanceLine(store, it, "") }.toMutableList()
+
+        // Self-resolution: the sender's queued instance lives in its own world
+        // this store cannot see — hop there, so lobby `status` shows the queue
+        // they are actually in (a player sits in at most one, so unambiguous).
+        val ownWorld = MinigameCommand.ownQueueWorld(context, store)
+        if (ownWorld != null && ownWorld !== world) {
+            lines += Instances.runOnWorld(ownWorld) {
+                val ownStore = ownWorld.entityStore.store
+                MinigameCommand.snapshot(ownStore)
+                    .map { MinigameCommand.instanceLine(ownStore, it, " — your queue, world '${ownWorld.name}'") }
+            }
         }
 
         context.sendMessage(
@@ -534,15 +634,6 @@ class StatusCommand : AbstractWorldCommand("status", "minigame.commands.status.d
         )
     }
 
-    private fun describe(phase: Phase): String = when (phase.kind) {
-        Phase.Kind.COUNTDOWN -> "Countdown(${phase.seconds.toInt()}s)"
-        Phase.Kind.PLAYING -> "Playing(${phase.seconds.toInt()}s)"
-        Phase.Kind.ENDING -> "Ending(${phase.reason}, ${phase.seconds.toInt()}s)"
-        else -> phase.kind.name.lowercase().replaceFirstChar { it.uppercase() }
-    }
-
-    private fun gameTypeOf(store: Store<EntityStore>, ref: Ref<EntityStore>): String =
-        store.getComponent(ref, ControllerComponent.componentType)?.gameTypeId ?: "?"
 }
 
 /** Joins the sender to a joinable instance: `--game=<id>` targets one, otherwise the lowest-id joinable. */
@@ -1575,17 +1666,28 @@ class QueueCommand : AbstractPlayerCommand("queue", "minigame.commands.queue.des
             return
         }
 
-        // An existing queue of THIS minigame (and, when named, THIS map):
-        // joinable Waiting/Countdown instance with room.
-        val existing = QueueFlow.pickJoinableForGame(resolved.gameTypeId, resolved.instanceAsset)
+        // An existing queue of THIS minigame: joinable Waiting/Countdown
+        // instance with room. When no map was NAMED, any open queue of the
+        // game type counts — the random map roll below must not fork a second
+        // parallel queue of the same minigame (two queuers on different rolls
+        // would never meet; that split stk into a canyon and a trork-fort
+        // queue).
+        val existing = QueueFlow.pickJoinableForGame(
+            resolved.gameTypeId,
+            if (mapId != null) resolved.instanceAsset else null,
+        )
         if (existing != null) {
             QueueFlow.queueInto(context, store, ref, playerRef, world, existing)
             return
         }
 
         // All queues full or none running: an uncapped queue never fills up —
-        // room may also be exhausted by MaxPlayers.
-        val running = QueueFlow.scanForGame(resolved.gameTypeId, resolved.instanceAsset)
+        // room may also be exhausted by MaxPlayers. Same map-scope rule: an
+        // unnamed map means the whole game type.
+        val running = QueueFlow.scanForGame(
+            resolved.gameTypeId,
+            if (mapId != null) resolved.instanceAsset else null,
+        )
         if (running.isNotEmpty()) {
             val live = running.firstOrNull { !it.joinable }
             if (live != null) {

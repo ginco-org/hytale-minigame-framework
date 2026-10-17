@@ -226,10 +226,10 @@ class PhaseSystem : TickingSystem<EntityStore>() {
     /**
      * Teleports the instance's players to its spawn-point markers when the
      * game starts. Each player goes to their **team's pool** — markers
-     * (volumes, then points, each by id) tagged `minigame: SPAWN_<TEAM>` — cycled
-     * `i % n` per pool; teams without their own pool draw from the generic
-     * `spawn` pool; with no markers at all players simply stay where they
-     * are. Runs after the scan, on the world thread, so direct
+     * (volumes, then points, each by id) carrying a bare `SPAWN_<TEAM>` tag
+     * key — cycled `i % n` per pool; teams without their own pool draw from
+     * the generic `spawn` pool; with no markers at all players simply stay
+     * where they are. Runs after the scan, on the world thread, so direct
      * [TransformComponent] mutation is legal.
      */
     private fun teleportPlayersToSpawnPoints(store: Store<EntityStore>, controllerRef: Ref<EntityStore>) {

@@ -383,8 +383,18 @@ object Instances {
     // ---- queued players (pre-start) ------------------------------------------
 
     /** Looks a loaded world up by name, or null when it is not loaded. */
-    fun worldByName(name: String): World? =
-        Universe.get().worlds[name]
+    fun worldByName(name: String): World? {
+        // The Universe keys worlds by its NORMALIZED name (observed: case-
+        // folded — 'instance-Canyon-…' is keyed 'instance-canyon-…') while
+        // [World.getName] and every stored reference (PendingInstanceEntry,
+        // asset names) keep the original case. An exact-key lookup misses
+        // every mixed-case name, so a LIVE world reads as vanished: queued
+        // markers resolved to null, lobby `status` went empty and the next
+        // queuer spawned a parallel queue. Instance-world counts are tiny —
+        // resolve by identity compare.
+        return Universe.get().worlds[name]
+            ?: Universe.get().worlds.values.firstOrNull { it.name.equals(name, ignoreCase = true) }
+    }
 
     /**
      * Moves every player still queued-and-not-transferred (their entity carries

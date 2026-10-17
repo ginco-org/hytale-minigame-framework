@@ -1,6 +1,5 @@
 package gg.ginco.minigame
 
-import com.hypixel.hytale.assetstore.AssetRegistry
 import com.hypixel.hytale.builtin.points.PointsPlugin
 import com.hypixel.hytale.builtin.points.manager.PointEntry
 import com.hypixel.hytale.builtin.triggervolumes.TriggerVolumesPlugin
@@ -43,9 +42,10 @@ class MinigameTriggerVolumeTest {
     }
 
     /**
-     * `Regions.addRegion(world, type, …)` stores a builtin TriggerVolume, tagged
-     * `minigame=<type>` in that world's manager — the region is the builtin
-     * manager's content now, not the framework's own chunk-store resource.
+     * `Regions.addRegion(world, type, …)` stores a builtin TriggerVolume keyed
+     * `<type>` (valueless tag — the map tools set keys without values) in that
+     * world's manager — the region is the builtin manager's content now, not
+     * the framework's own chunk-store resource.
      */
     @HytaleTest(timeoutSeconds = 60)
     fun regionAddCreatesTaggedTriggerVolume(t: HytaleTestHelper) {
@@ -59,10 +59,9 @@ class MinigameTriggerVolumeTest {
             val manager = world.entityStore.store
                 .getResource(TriggerVolumesPlugin.get().managerResourceType)
             t.assertNotNull(manager, "world should hold the builtin TriggerVolumeManager")
-            val tagged = manager!!.getVolumesByTag(AssetRegistry.getOrCreateTagIndex(Regions.TAG))
-            t.assertEquals(1, tagged.size, "the region should be a trigger volume tagged 'minigame'")
-            t.assertEquals("capture", tagged.single().rawTags[Regions.TAG],
-                "the tag value should be the region's type id")
+            val volume = manager!!.getVolumes().single()
+            t.assertTrue(volume.rawTags.containsKey("capture"),
+                "the region's type id should be authored as a bare tag key, got ${volume.rawTags}")
         }
         t.succeed()
     }
@@ -101,8 +100,8 @@ class MinigameTriggerVolumeTest {
 
     /**
      * Spawn markers can be **Points** (id/name/position/rotation/tags). A
-     * Point tagged `minigame=spawn` is a start-of-game teleport target and, as
-     * the richer backend, carries a facing the framework applies.
+     * Point keyed `spawn` (valueless tag) is a start-of-game teleport target
+     * and, as the richer backend, carries a facing the framework applies.
      */
     @HytaleTest(timeoutSeconds = 60)
     fun pointSpawnMarkerTeleportsWithRotation(t: HytaleTestHelper) {
@@ -117,7 +116,7 @@ class MinigameTriggerVolumeTest {
             val id = manager.generateUniquePointId()
             val point = PointEntry(id, world.name.lowercase(),
                 Vector3d(-20.0, 70.0, -20.0), Vector3f(0f, 90f, 0f), "spawn", true)
-            point.setTags(mapOf(Regions.TAG to Regions.SPAWN_TYPE))
+            point.setTags(mapOf(Regions.SPAWN_TYPE to ""))
             manager.register(id, point)
         }
         t.assertEquals(1, t.runOnWorldReturning { Regions.spawnPointsOf(world).size },
@@ -168,7 +167,7 @@ class MinigameTriggerVolumeTest {
             val id = manager.generateUniquePointId()
             val point = PointEntry(id, world.name.lowercase(),
                 Vector3d(-30.0, 64.0, -30.0), Vector3f(), "spawn", true)
-            point.setTags(mapOf(Regions.TAG to Regions.SPAWN_TYPE))
+            point.setTags(mapOf(Regions.SPAWN_TYPE to ""))
             manager.register(id, point)
         }
         t.assertEquals(2, t.runOnWorldReturning { Regions.spawnPointsOf(world).size },
@@ -221,7 +220,7 @@ class MinigameTriggerVolumeTest {
                     "a region is world content — it must survive the instance")
                 t.assertEquals(1, world.entityStore.store
                     .getResource(TriggerVolumesPlugin.get().managerResourceType)!!
-                    .getVolumesByTag(AssetRegistry.getOrCreateTagIndex(Regions.TAG)).size,
+                    .getVolumes().size,
                     "the builtin manager should still hold the region's volume")
             }
         }
@@ -245,7 +244,7 @@ class MinigameTriggerVolumeTest {
         t.runOnWorld {
             val manager = world.entityStore.store
                 .getResource(TriggerVolumesPlugin.get().managerResourceType)!!
-            val volume = manager.getVolumesByTag(AssetRegistry.getOrCreateTagIndex(Regions.TAG)).single()
+            val volume = manager.getVolumes().single()
             manager.unregister(volume.id)
         }
         t.runOnWorld {

@@ -1,6 +1,5 @@
 package gg.ginco.minigame.util
 
-import com.hypixel.hytale.assetstore.AssetRegistry
 import com.hypixel.hytale.builtin.points.PointsPlugin
 import com.hypixel.hytale.builtin.triggervolumes.EntityTargetType
 import com.hypixel.hytale.builtin.triggervolumes.TriggerVolumesPlugin
@@ -38,7 +37,12 @@ import java.util.EnumSet
  * framework's own resource gave, without the hand-rolled bookkeeping.
  */
 object Regions {
-    /** The tag key whose value is a region's type id. */
+    /**
+     * Legacy tag key whose value was a region's type id (`{"minigame": "CAGE"}`),
+     * still read for compatibility. The current convention is the type id as a
+     * BARE tag key with no value (`{"CAGE": ""}`) — the in-game point/volume
+     * tools set keys without values, which fits a one-tag contract better.
+     */
     const val TAG = "minigame"
 
     const val SPAWN_TYPE = "spawn"
@@ -51,16 +55,32 @@ object Regions {
     internal fun managerOf(world: World): TriggerVolumeManager? =
         world.entityStore.store.getResource(TriggerVolumesPlugin.get().managerResourceType)
 
-    private fun typeTagIndex(): Int = AssetRegistry.getOrCreateTagIndex(TAG)
+    /**
+     * The region type id a volume belongs to, or null when it is not a framework region.
+     *
+     * Two authoring forms, both read: current — the type id is the tag KEY with
+     * an empty value (`{"CAGE": ""}`); legacy — key [TAG] with the type as its
+     * value (`{"minigame": "CAGE"}`). A marker carries exactly one framework
+     * tag, so the first blank-valued key is its type. The builtin persists a
+     * missing value as the literal "Empty" (measured via setTags("") →
+     * rawTags), so that sentinel counts as valueless too.
+     */
+    internal fun typeOf(volume: VolumeEntry): String? {
+        volume.rawTags[TAG]?.takeUnless { isNoValue(it) }?.let { return it }
+        return volume.rawTags.entries
+            .firstOrNull { it.key != TAG && isNoValue(it.value) }?.key
+    }
 
-    /** The region type id a volume belongs to, or null when it is not a framework region. */
-    internal fun typeOf(volume: VolumeEntry): String? = volume.rawTags[TAG]
+    private fun isNoValue(tagValue: String): Boolean =
+        tagValue.isBlank() || tagValue.equals("Empty", ignoreCase = true)
 
     /** Every framework volume in [world] (optionally of [type]), by id. */
     internal fun volumeEntries(world: World, type: String? = null): List<VolumeEntry> =
-        (managerOf(world)?.getVolumesByTag(typeTagIndex()) ?: emptyList())
-            .filter { type == null || typeOf(it) == type }
-            .sortedBy { it.id }
+        (managerOf(world)?.getVolumes() ?: emptyList())
+            .mapNotNull { volume -> typeOf(volume)?.let { volume to it } }
+            .filter { type == null || it.second == type }
+            .sortedBy { it.first.id }
+            .map { it.first }
 
     // ---- public surface ----------------------------------------------------
 
@@ -122,7 +142,9 @@ object Regions {
             ArrayList(), EnumSet.of(EntityTargetType.PLAYER), true,
         )
         entry.setName(type)
-        entry.setTags(mapOf(TAG to type))
+        // Current convention: the type id is the tag KEY, authored valueless —
+        // the map tools set keys without values (see [typeOf]).
+        entry.setTags(mapOf(type to ""))
         // Keep the volume's chunk sampled even where no player stands, so the
         // builtin's spatial tick still sees it in a headless world whose chunks
         // are not flagged TICKING.
@@ -151,21 +173,25 @@ object Regions {
     /**
      * Every spawn target in [world], from BOTH backends:
      *
-     * - **TriggerVolume** volumes tagged [TAG]=`spawn` (the output of
+     * - **TriggerVolume** volumes keyed [SPAWN_TYPE] (the output of
      *   `/minigame region add spawn`) carry a box; the target is its centre,
      *   with no facing.
-     * - **Point** entries tagged [TAG]=`spawn` carry an explicit position
+     * - **Point** entries keyed [SPAWN_TYPE] carry an explicit position
      *   and full rotation — the richer marker when a facing matters.
      *
      * Volumes first, then points, each by id, so player i -> target i % n is
      * stable across a world's lifetime.
      *
-     * With [type], only markers tagged [TAG]=[type] are returned — the
+     * With [type], only markers carrying that bare tag key are returned — the
      * per-team convention is [spawnTypeFor]: team "Kweebecs" → its spawn
-     * markers are tagged `minigame: SPAWN_KWEEBECS`, so
+     * markers are keyed `SPAWN_KWEEBECS`, so
      * `spawnPointsOf(world, spawnTypeFor("Kweebecs"))` is exactly that
      * team's pool. The generic pool ([SPAWN_TYPE]) is what players fall back
      * to when their team has none (see `PhaseSystem`).
+     *
+     * The point filter is a SINGLE tag key: `getPointsWithTags` matches keys
+     * any-of, so passing [TAG] plus the type (the old call) handed every team
+     * the union of all tagged pools — both teams spawned on the same markers.
      */
     fun spawnPointsOf(world: World, type: String? = null): List<SpawnPoint> {
         val effective = type ?: SPAWN_TYPE
@@ -174,7 +200,7 @@ object Regions {
 
         val pointManager = world.entityStore.store.getResource(
             PointsPlugin.get().managerResourceType) ?: return out
-        pointManager.getPointsWithTags(TAG, effective)
+        pointManager.getPointsWithTags(effective)
             .sortedBy { it.id }
             .forEach { point ->
                 // PointEntry stores degrees; its transform hands back radians.
@@ -186,7 +212,7 @@ object Regions {
     /**
      * The spawn-marker type for [teamName] — `SPAWN_` + the uppercase team
      * name ("Kweebecs" → `SPAWN_KWEEBECS`). Minigames author their per-team
-     * spawn points/images with this tag value; `PhaseSystem` resolves each
+     * spawn points/volumes with this bare tag key; `PhaseSystem` resolves each
      * player's pool from their team and falls back to the generic one.
      */
     fun spawnTypeFor(teamName: String): String = "SPAWN_" + teamName.uppercase()
