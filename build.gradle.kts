@@ -19,7 +19,7 @@ plugins {
 }
 
 group = "gg.ginco"
-version = "0.4.0"
+version = "0.5.0"
 
 dependencies {
     // api (not implementation) so the published POM exposes codec as a
