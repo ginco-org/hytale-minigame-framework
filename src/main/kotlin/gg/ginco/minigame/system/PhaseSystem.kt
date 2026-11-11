@@ -8,6 +8,7 @@ import com.hypixel.hytale.component.RemoveReason
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.component.system.tick.TickingSystem
 import com.hypixel.hytale.logger.HytaleLogger
+import com.hypixel.hytale.math.vector.Rotation3f
 import com.hypixel.hytale.server.core.Message
 import com.hypixel.hytale.server.core.universe.PlayerRef
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
@@ -84,7 +85,6 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                             buffer.replaceComponent(ref, Phase.componentType, Phase.countdown(remaining))
                         }
                     }
-
                     Phase.Kind.PLAYING ->
                         buffer.replaceComponent(ref, Phase.componentType, Phase.playing(phase.seconds + dt))
 
@@ -250,7 +250,25 @@ class PhaseSystem : TickingSystem<EntityStore>() {
             val index = cycle.merge(poolKey, 1, Int::plus)!! - 1
             val target = spawns[index % spawns.size]
             val transform = store.getComponent(player, TransformComponent.getComponentType()) ?: continue
-            target.applyTo(transform)
+            // A raw TransformComponent mutation moves the server-side entity only —
+            // the client never learns about it, its authoritative movement drags
+            // the entity straight back, and everyone stays at their arrival
+            // point. This is the server's own mid-play player-teleport pattern
+            // (GamePacketHandler / AbilityPullSystem): move the server entity,
+            // mark a client teleport pending, and snap the client with a
+            // ClientTeleport packet (Teleport AckTracker tracks the ack).
+            transform.teleportPosition(target.position)
+            target.rotation?.let { transform.teleportRotation(it) }
+            val rotation = target.rotation ?: transform.rotation
+            store.addComponent(
+                player,
+                com.hypixel.hytale.server.core.modules.entity.teleport.PendingTeleport.getComponentType(),
+                com.hypixel.hytale.server.core.modules.entity.teleport.PendingTeleport(),
+            )
+            store.getComponent(player, PlayerRef.getComponentType())?.let { playerRef ->
+                com.hypixel.hytale.server.core.modules.entity.teleport.TeleportSystems
+                    .queueAndSendClientTeleport(playerRef, target.position, rotation, rotation, true)
+            }
         }
     }
 

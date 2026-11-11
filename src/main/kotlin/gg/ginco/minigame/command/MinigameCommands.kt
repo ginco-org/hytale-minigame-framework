@@ -364,8 +364,18 @@ class CreateCommand : AbstractWorldCommand("create", "minigame.commands.create.d
             store.getComponent(it, TransformComponent.getComponentType())
         }?.let { Transform(Vector3d(it.position), Rotation3f(it.rotation)) } ?: Transform()
 
-        val instanceWorld = Instances.createInInstance(world, asset, returnPoint, resolved.gameTypeId, { targetStore, controllerRef, _, id ->
+        val instanceWorld = Instances.createInInstance(world, asset, returnPoint, resolved.gameTypeId, { targetStore, controllerRef, targetWorld, _ ->
             DefinitionStore.spawnInto(targetStore, controllerRef, resolved.toDefinition())
+            // Instance-asset games run entirely in this copied world, so their
+            // definition behaviors must activate HERE — the in-world create
+            // path (line ~330) only covers games without an instance asset.
+            // Without this, kits/cages/timers never come online in queue or
+            // `/minigame create` flows (the teardown still deactivates, so
+            // activation and cleanup were asymmetric).
+            if (resolved.behaviors.isNotEmpty()) {
+                gg.ginco.minigame.behavior.GameBehaviors.activate(
+                    targetWorld, targetStore, controllerRef, resolved.gameTypeId, resolved.behaviors)
+            }
         }, resolved.minPlayers, resolved.maxPlayers)
 
         if (instanceWorld == null) {
@@ -1709,8 +1719,15 @@ class QueueCommand : AbstractPlayerCommand("queue", "minigame.commands.queue.des
             store.getComponent(it, TransformComponent.getComponentType())
         }?.let { Transform(Vector3d(it.position), Rotation3f(it.rotation)) } ?: Transform()
 
-        val instanceWorld = Instances.createInInstance(world, resolved.instanceAsset, returnPoint, resolved.gameTypeId, { targetStore, controllerRef, _, _ ->
+        val instanceWorld = Instances.createInInstance(world, resolved.instanceAsset, returnPoint, resolved.gameTypeId, { targetStore, controllerRef, targetWorld, _ ->
             DefinitionStore.spawnInto(targetStore, controllerRef, resolved.toDefinition())
+            // Same contract as CreateCommand's instance-world path: the
+            // definition's behaviors live and die with this copied world —
+            // activate them here at spawn (kits, cages, timers, economy).
+            if (resolved.behaviors.isNotEmpty()) {
+                gg.ginco.minigame.behavior.GameBehaviors.activate(
+                    targetWorld, targetStore, controllerRef, resolved.gameTypeId, resolved.behaviors)
+            }
         }, resolved.minPlayers, resolved.maxPlayers)
         if (instanceWorld == null) {
             context.sendMessage(Message.raw("Failed to start a queue for '$gameTypeId' (${resolved.instanceAsset})."))
