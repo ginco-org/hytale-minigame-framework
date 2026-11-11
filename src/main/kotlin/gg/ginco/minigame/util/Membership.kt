@@ -49,6 +49,18 @@ object Membership {
         val ref = playerRef.reference ?: return // entity already gone
         val world = ref.store.externalData.world
 
+        fun releaseQueueSeat() {
+            // A queued-but-not-transferred player has no membership yet —
+            // their roster slot would leak (counted by headcount as a phantom
+            // player: skewed status counts, premature auto-starts at the
+            // min-players floor). Release it while the entity — and its
+            // PendingInstanceEntry marker — still exists.
+            val marker = ref.store.getComponent(ref, gg.ginco.minigame.component.PendingInstanceEntry.componentType)
+                ?: return
+            gg.ginco.minigame.command.QueueFlow.releaseIfPending(
+                ref.store, ref, playerRef, refuseIfLive = true)?.let { return }
+        }
+
         fun preserveAndAnnounce() {
             val store = ref.store
             val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
@@ -77,9 +89,13 @@ object Membership {
         }
 
         if (world.isInThread()) {
+            releaseQueueSeat()
             preserveAndAnnounce()
         } else {
-            world.execute(::preserveAndAnnounce)
+            world.execute {
+                releaseQueueSeat()
+                preserveAndAnnounce()
+            }
         }
     }
 

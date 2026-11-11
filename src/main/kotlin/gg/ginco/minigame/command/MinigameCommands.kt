@@ -187,8 +187,16 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
          */
         fun ownQueueWorld(context: CommandContext, store: Store<EntityStore>): World? {
             val sender = context.senderAsPlayerRef() ?: return null
-            val pending = store.getComponent(sender, PendingInstanceEntry.componentType) ?: return null
-            return Instances.worldByName(pending.worldName)
+            // Queued-but-not-transferred: the pending marker names the world.
+            store.getComponent(sender, PendingInstanceEntry.componentType)?.let {
+                return Instances.worldByName(it.worldName)
+            }
+            // Already transferred: the marker was stripped on arrival — resolve
+            // through the cross-world membership link instead (their instance
+            // may still be Waiting when a countdown was cancelled or a force
+            // start was reverted).
+            return Instances.crossWorldControllerOf(store, sender)
+                ?.store?.externalData?.world
         }
 
         /** One `status`/`list instances` line: id, game type, phase, reachable players, optional suffix. */
