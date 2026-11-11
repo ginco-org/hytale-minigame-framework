@@ -490,7 +490,7 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
      * queue time, the hop belongs to the countdown start).
      */
     private fun startOwnQueueWorld(context: CommandContext, ownWorld: World, countdownSeconds: Float) {
-        val started = Instances.runOnWorld(ownWorld) {
+        val started = Instances.runOnWorldBounded(ownWorld) {
             val ownStore = ownWorld.entityStore.store
             val waiting = MinigameCommand.snapshot(ownStore).filter { it.phase.kind == Phase.Kind.WAITING }
             for (instance in waiting) {
@@ -503,8 +503,12 @@ class StartCommand : AbstractWorldCommand("start", "minigame.commands.start.desc
             waiting.size
         }
         context.sendMessage(
-            if (started > 0) Message.raw("Started your minigame (world '${ownWorld.name}') — $countdownSeconds s countdown.")
-            else Message.raw("Your minigame is not waiting in world '${ownWorld.name}' (already running?).")
+            when {
+                started == null -> Message.raw(
+                    "Your queue's world ('${ownWorld.name}') is not responding — try /minigame stop and queue again.")
+                started > 0 -> Message.raw("Started your minigame (world '${ownWorld.name}') — $countdownSeconds s countdown.")
+                else -> Message.raw("Your minigame is not waiting in world '${ownWorld.name}' (already running?).")
+            }
         )
     }
 
@@ -639,11 +643,13 @@ class StatusCommand : AbstractWorldCommand("status", "minigame.commands.status.d
         // they are actually in (a player sits in at most one, so unambiguous).
         val ownWorld = MinigameCommand.ownQueueWorld(context, store)
         if (ownWorld != null && ownWorld !== world) {
-            lines += Instances.runOnWorld(ownWorld) {
+            // Bounded hop: a wedged queue world degrades to a partial reply
+            // instead of hanging status forever.
+            lines += Instances.runOnWorldBounded(ownWorld) {
                 val ownStore = ownWorld.entityStore.store
                 MinigameCommand.snapshot(ownStore)
                     .map { MinigameCommand.instanceLine(ownStore, it, " — your queue, world '${ownWorld.name}'") }
-            }
+            } ?: emptyList()
         }
 
         context.sendMessage(
@@ -1409,20 +1415,22 @@ internal object QueueFlow {
         gameTypeId: String?,
         instanceAsset: String?,
     ): Candidate? =
-        Instances.runOnWorld(world) {
+        // Bounded: ONE wedged/removed instance world must not hang the whole
+        // scan (and with it /minigame queue|status|start) — it is skipped.
+        Instances.runOnWorldBounded(world) {
             val store = world.entityStore.store
-            val controller = Instances.findController(world) ?: return@runOnWorld null
+            val controller = Instances.findController(world) ?: return@runOnWorldBounded null
             if (gameTypeId != null &&
                 store.getComponent(controller, ControllerComponent.componentType)?.gameTypeId != gameTypeId) {
-                return@runOnWorld null
+                return@runOnWorldBounded null
             }
             if (instanceAsset != null && Instances.assetNameOf(world) != instanceAsset) {
-                return@runOnWorld null
+                return@runOnWorldBounded null
             }
             // Everything below runs ON the world thread: snapshot(phase), the
             // roster-headcount and the controller components are store-bound.
             val snapshot = MinigameCommand.snapshot(store).firstOrNull { it.ref == controller }
-                ?: return@runOnWorld null
+                ?: return@runOnWorldBounded null
             Candidate(
                 world, controller, snapshot.id,
                 MinigameCommand.seatCount(store, controller),

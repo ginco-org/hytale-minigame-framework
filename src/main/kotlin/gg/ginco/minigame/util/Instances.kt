@@ -443,6 +443,29 @@ object Instances {
             throw (e.cause ?: e)
         }
 
+    /** How long cross-world scans wait for a world's thread before skipping it. */
+    const val SCAN_TIMEOUT_MS = 5_000L
+
+    /**
+     * Bounded [runOnWorld]: null when the world's thread does not answer in
+     * [timeoutMs] (wedged/spinning) or the world was torn down mid-hop. Scan
+     * paths use this so ONE broken instance world degrades to "skipped"
+     * instead of wedging /minigame status|queue|start for everyone.
+     */
+    fun <T> runOnWorldBounded(world: World, timeoutMs: Long = SCAN_TIMEOUT_MS, body: () -> T): T? = try {
+        CompletableFuture.supplyAsync(body, world)
+            .orTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+            .join()
+    } catch (e: java.util.concurrent.CompletionException) {
+        LOGGER.atWarning().withCause(e.cause ?: e).log(
+            "World '%s' did not answer within %dms — skipping it for this scan", world.name, timeoutMs)
+        null
+    } catch (e: java.util.concurrent.RejectedExecutionException) {
+        LOGGER.atWarning().withCause(e).log(
+            "World '%s' is gone — skipping it for this scan", world.name)
+        null
+    }
+
     /** Runs [body] now when already on [world]'s thread, else hops to it (fire and forget). */
     fun onWorldThread(world: World, body: () -> Unit) {
         if (world.isInThread()) body() else world.execute(body)
