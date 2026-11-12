@@ -46,8 +46,11 @@ object Membership {
      * the player's role is still readable.
      */
     fun handleDisconnect(playerRef: PlayerRef) {
-        val ref = playerRef.reference ?: return // entity already gone
-        val world = ref.store.externalData.world
+        // NOTE: do not capture the entity ref once and reuse it across both
+        // steps — releaseQueueSeat removes the PendingInstanceEntry component,
+        // which moves the entity to another archetype chunk and invalidates
+        // any ref captured before it. Re-resolve playerRef.reference per step.
+        val world = playerRef.reference?.store?.externalData?.world ?: return
 
         fun releaseQueueSeat() {
             // A queued-but-not-transferred player has no membership yet —
@@ -55,13 +58,15 @@ object Membership {
             // player: skewed status counts, premature auto-starts at the
             // min-players floor). Release it while the entity — and its
             // PendingInstanceEntry marker — still exists.
-            val marker = ref.store.getComponent(ref, gg.ginco.minigame.component.PendingInstanceEntry.componentType)
+            val ref = playerRef.reference ?: return
+            ref.store.getComponent(ref, gg.ginco.minigame.component.PendingInstanceEntry.componentType)
                 ?: return
             gg.ginco.minigame.command.QueueFlow.releaseIfPending(
                 ref.store, ref, playerRef, refuseIfLive = true)?.let { return }
         }
 
         fun preserveAndAnnounce() {
+            val ref = playerRef.reference ?: return // fresh: the release above may have mutated the archetype
             val store = ref.store
             val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
                 ?: return@preserveAndAnnounce
