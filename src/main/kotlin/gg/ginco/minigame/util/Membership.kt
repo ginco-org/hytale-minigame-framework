@@ -151,6 +151,7 @@ object Membership {
         for (team in Teams.of(store, controllerRef)) {
             store.getComponent(team.ref, TeamMembers.componentType)?.members?.remove(uuid)
         }
+        Teams.removePendingSeat(store, controllerRef, uuid)
         val playerEntity = PlayerSet.findByUuid(store, uuid)
         if (playerEntity != null) {
             store.removeComponentIfExists(playerEntity, TeamRef.componentType)
@@ -251,6 +252,7 @@ object Membership {
         val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
         val role = store.getComponent(ref, Role.componentType)
         PreStartFreeze.clear(store, ref)
+        if (controllerRef != null) Teams.removePendingSeat(store, controllerRef, playerRef.uuid)
 
         val teamRef = store.getComponent(ref, TeamRef.componentType)?.teamRef
         if (teamRef != null && teamRef.isValid()) {

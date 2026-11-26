@@ -145,8 +145,25 @@ object Instances {
         maxPlayers: Int = 0,
     ): World? {
         val instanceWorld = try {
-            InstancesPlugin.get().spawnInstance(assetName, sourceWorld, returnPoint)
-                .orTimeout(SPAWN_TIMEOUT_SECONDS, TimeUnit.SECONDS).join()
+            InstancesPlugin.get().spawnInstance(assetName, null, sourceWorld, returnPoint) { config ->
+                // The builtin reaps an empty instance after ~20s. A queue world
+                // has no players until the countdown teleports them in, so its
+                // own removal conditions would delete the queue mid-wait and
+                // strand every pending seat in a dead world. The framework owns
+                // teardown (endInstanceIfEmpty / endInstance).
+                com.hypixel.hytale.builtin.instances.config.InstanceWorldConfig
+                    .ensureAndGet(config)
+                    .setRemovalConditions(*com.hypixel.hytale.builtin.instances.removal.RemovalCondition.EMPTY)
+                // Match `/worldevent enable --enable=false` BEFORE the world
+                // starts: setting it after start lets a stored Goblin event
+                // load and tick once.
+                com.hypixel.hytale.builtin.adventure.worldevents.WorldEventsWorldConfig
+                    .getOrCreate(config)
+                    .setEnableWorldEvents(false)
+                // Instance assets default to the disabled map provider; the
+                // copied chunks are real, so the runtime map should render them.
+                config.worldMapProvider = com.hypixel.hytale.server.core.universe.world.worldmap.provider.chunk.WorldGenWorldMapProvider()
+            }.orTimeout(SPAWN_TIMEOUT_SECONDS, TimeUnit.SECONDS).join()
         } catch (e: Exception) {
             LOGGER.atSevere().withCause(e).log("Failed to spawn instance asset '$assetName'")
             return null

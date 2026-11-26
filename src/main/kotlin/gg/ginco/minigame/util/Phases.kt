@@ -22,6 +22,12 @@ object Phases {
     /** Replaces the phase of [ref] and dispatches [PhaseChangedEvent]. */
     fun set(store: Store<EntityStore>, ref: Ref<EntityStore>, phase: Phase) {
         val old = store.getComponent(ref, Phase.componentType)?.kind
+        // Teams are assigned when the game actually starts, not at queue time:
+        // shuffle the waiting seats into balanced teams before the countdown is
+        // visible (and before the queue is teleported into the map).
+        if (old == Phase.Kind.WAITING && phase.kind == Phase.Kind.COUNTDOWN) {
+            Teams.assignQueued(store, ref)
+        }
         store.replaceComponent(ref, Phase.componentType, phase)
         broadcast(ref, old ?: phase.kind, phase.kind)
     }

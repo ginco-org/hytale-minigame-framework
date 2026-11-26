@@ -53,11 +53,12 @@ Second vertical slice implemented:
     `/minigame join` is restored into their exact instance, role and team.
     Voluntary `/minigame leave` still releases everything immediately
   - `queue <minigame> [<map>]` — the player-facing join: enters an open
-    queue for that minigame (team-balanced; the first queuer spawns the map)
-    or spawns one; the queue auto-starts a countdown at the game's
-    `MinPlayers` floor (`PhaseSystem`), capped by `MaxPlayers`; queueing
-    elsewhere switches queues; `dequeue` leaves a pre-start queue (live
-    exits go through `leave`); `/minigame start` remains the admin
+    queue for that minigame (the first queuer spawns the map) or spawns one;
+    players stay teamless until the countdown, where `Teams.assignQueued`
+    shuffles them into balanced teams; the queue auto-starts a countdown at
+    the game's `MinPlayers` floor (`PhaseSystem`), capped by `MaxPlayers`;
+    queueing elsewhere switches queues; `dequeue` leaves a pre-start queue
+    (live exits go through `leave`); `/minigame start` remains the admin
     force-start that ignores floors
   - `defs list|reload|save [--game=<id>]` — durable minigame definitions:
     JSON in the plugin data directory (`definitions/<gameTypeId>.json`),
@@ -195,7 +196,6 @@ and untargeted instance commands, and command response text assertions.
 
 ### Next up
 
-- team assignment (`TeamData` / `TeamMembers`) on join
 - region marker placement via the builtin TriggerVolumes/Points tools
 - disconnect/leave handling beyond `/minigame leave`
 

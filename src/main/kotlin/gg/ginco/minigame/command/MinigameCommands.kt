@@ -228,6 +228,7 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
             for (team in Teams.of(store, controllerRef)) {
                 store.getComponent(team.ref, TeamMembers.componentType)?.members?.let { uuids.addAll(it) }
             }
+            uuids.addAll(Teams.pendingSeats(store, controllerRef))
             for (memberRef in PlayerSet(store, controllerRef).all()) {
                 store.getComponent(memberRef, PlayerRef.getComponentType())?.let { uuids.add(it.uuid) }
             }
@@ -236,11 +237,11 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
 
         /**
          * The instance's headcount across BOTH member styles: physically present
-         * ([InMinigame] entities in this store — in-place joins, arrived players)
-         * and roster-only members. Queued players are NOT teleported into the map
-         * world at queue time any more, so before the countdown starts they exist
-         * only as uuids on team rosters — a [PlayerSet]-only count would read 0
-         * and the min-players floor would never fire. Deduplicates by uuid (an
+         * ([InMinigame] entities in this store — in-place joins, arrived players),
+         * roster-only members and teamless queued seats. Queued players are NOT
+         * teleported into the map world at queue time, and their team is not
+         * assigned until the countdown; a [PlayerSet]-only count would read 0 and
+         * the min-players floor would never fire. Deduplicates by uuid (an
          * arrived player sits in both the roster and the store).
          *
          * Preserved members are disconnected (their seat is held, but they are
@@ -257,6 +258,7 @@ class MinigameCommand : AbstractCommandCollection("minigame", "minigame.commands
             for (team in Teams.of(store, controllerRef)) {
                 store.getComponent(team.ref, TeamMembers.componentType)?.members?.let { uuids.addAll(it) }
             }
+            uuids.addAll(Teams.pendingSeats(store, controllerRef))
             for (memberRef in PlayerSet(store, controllerRef).all()) {
                 store.getComponent(memberRef, PlayerRef.getComponentType())?.let { uuids.add(it.uuid) }
             }
@@ -1316,8 +1318,10 @@ internal object QueueFlow {
      *
      * [teamName] names an EXISTING team (its `maxPlayers` is enforced here,
      * which only `/minigame team join` did before) or a NEW one, which is
-     * created just as the old write path always did; null hands the joiner to
-     * [Teams.smallest], or leaves them unteamed when the instance has no teams.
+     * created just as the old write path always did. A null team in a WAITING
+     * instance becomes a [gg.ginco.minigame.component.PendingSeats] entry and
+     * is assigned randomly at Waiting→Countdown; a null team during COUNTDOWN
+     * is assigned immediately.
      */
     fun acquireSeat(candidate: Candidate, uuid: java.util.UUID, teamName: String?): Seat =
         Instances.runOnWorld(candidate.world) {
@@ -1357,17 +1361,14 @@ internal object QueueFlow {
                     }
                     assigned = teamName
                 }
+            } else if (snapshot.phase.kind == Phase.Kind.WAITING) {
+                // Team selection waits for the countdown: the queue only holds
+                // the seat, so join order cannot pre-decide teams.
+                Teams.addPendingSeat(store, candidate.controllerRef, uuid)
             } else {
-                val team = Teams.smallest(store, candidate.controllerRef)
-                if (team != null) {
-                    val roster = store.getComponent(team.ref, TeamMembers.componentType)?.members
-                    if (roster == null) {
-                        return@runOnWorld Seat.Refused(Refusal.TEAM_MISSING, snapshot.id)
-                    }
-                    if (uuid !in roster) roster.add(uuid)
-                    assigned = team.data.name
-                }
-                // No teams at all: unteamed join (in-world join semantics).
+                // Countdown already running: this joiner missed the batch
+                // assignment, so place them now with the same balanced roll.
+                assigned = Teams.assignOne(store, candidate.controllerRef, uuid)
             }
             Seat.Granted(
                 Candidate(candidate.world, candidate.controllerRef, snapshot.id, count + 1, max,
@@ -1641,10 +1642,10 @@ internal object QueueFlow {
  * Queues into an existing open queue for that minigame (and map, when one is
  * named) — a joinable instance (Waiting/Countdown) with room under the minigame's
  * `MaxPlayers` — or spawns a fresh queue when none exists; the first queuer pays
- * the world spawn. In the queue every participant lands on the lightest team
- * (balanced joins, `Teams.smallest`), and once the min (players) floor is met the
- * queue starts itself via a standard countdown (`PhaseSystem` auto-start; admins
- * can force-start earlier with `/minigame start`).
+ * the world spawn. Queued players stay teamless; when the min (players) floor is
+ * met the queue starts itself via a standard countdown (`PhaseSystem` auto-start;
+ * admins can force-start earlier with `/minigame start`) and Waiting→Countdown
+ * shuffles every queued seat into balanced teams (`Teams.assignQueued`).
  *
  * One minigame at a time: queueing elsewhere automatically leaves the current
  * minigame first. Unknown minigames are refused here — unlike `/minigame
@@ -1761,10 +1762,7 @@ class QueueCommand : AbstractPlayerCommand("queue", "minigame.commands.queue.des
             // the map when the game starts, never at queue time.
             Instances.runOnWorld(instanceWorld) {
                 val controller = Instances.findController(instanceWorld) ?: return@runOnWorld
-                val tStore = instanceWorld.entityStore.store
-                val team = Teams.smallest(tStore, controller) ?: return@runOnWorld
-                val roster = tStore.getComponent(team.ref, TeamMembers.componentType)?.members ?: return@runOnWorld
-                if (playerRef.uuid !in roster) roster.add(playerRef.uuid)
+                Teams.addPendingSeat(instanceWorld.entityStore.store, controller, playerRef.uuid)
             }
             InstanceRegistry.remember(playerRef.uuid, world.name)
             Instances.markPendingEntry(store, ref, instanceWorld.name, Role.participant())

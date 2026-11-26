@@ -3,10 +3,16 @@ package gg.ginco.minigame
 import gg.ginco.hytest.runtime.api.HytaleTest
 import gg.ginco.hytest.runtime.api.HytaleTestHelper
 import gg.ginco.hytest.runtime.player.SimulatedPlayer
+import com.hypixel.hytale.builtin.instances.config.InstanceWorldConfig
 import com.hypixel.hytale.server.core.universe.world.World
 import gg.ginco.minigame.component.PendingInstanceEntry
+import gg.ginco.minigame.component.Phase
+import gg.ginco.minigame.component.TeamMembers
 import gg.ginco.minigame.hytaletest.MinigameTestHarness
 import gg.ginco.minigame.hytaletest.Players
+import gg.ginco.minigame.util.Instances
+import gg.ginco.minigame.util.Phases
+import gg.ginco.minigame.util.Teams
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -68,6 +74,43 @@ class MinigameQueueForkTest {
             // Exactly ONE instance world of this game asset exists.
             t.assertEquals(1, listOf(asset.name).count { MinigameTestHarness.instanceWorldOf(it) != null },
                 "no parallel queue world may be spawned")
+
+            // Queued players hold teamless seats; no team is chosen in join
+            // order. Starting the countdown assigns all six, balanced 3/3.
+            var removalConditions = -1
+            Instances.runOnWorld(shared) {
+                removalConditions = InstanceWorldConfig.ensureAndGet(shared.worldConfig)
+                    .removalConditions.size
+                val store = shared.entityStore.store
+                val controller = Instances.findController(shared)!!
+                t.assertEquals(6, Teams.pendingSeats(store, controller).size,
+                    "all six queuers should be teamless pending seats")
+                for (team in Teams.of(store, controller)) {
+                    t.assertEquals(0,
+                        store.getComponent(team.ref, TeamMembers.componentType)?.members?.size,
+                        "team '${team.data.name}' must stay empty while Waiting")
+                }
+                Phases.set(store, controller, Phase.countdown(10f))
+            }
+            t.assertEquals(0, removalConditions,
+                "a queue world must not carry the builtin empty-world removal conditions")
+
+            var sizes: List<Int>? = null
+            t.succeedWhen {
+                Instances.runOnWorld(shared) {
+                    val store = shared.entityStore.store
+                    val controller = Instances.findController(shared)!!
+                    sizes = Teams.of(store, controller).map {
+                        store.getComponent(it.ref, TeamMembers.componentType)?.members?.size ?: 0
+                    }
+                }
+                t.assertEquals(listOf(3, 3), sizes?.sorted(),
+                    "the countdown should assign six queuers evenly, got $sizes")
+            }
+
+            Instances.runOnWorld(shared) {
+                Instances.findController(shared)?.let { Instances.endInstance(shared, it) }
+            }
             t.succeed()
         } finally {
             MinigameTestHarness.removeAssetPack(asset)
