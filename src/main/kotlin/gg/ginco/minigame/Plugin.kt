@@ -8,6 +8,7 @@ import gg.ginco.minigame.command.MinigameCommand
 import gg.ginco.minigame.definition.DefinitionStore
 import gg.ginco.minigame.system.InstanceEntrySystem
 import gg.ginco.minigame.system.PhaseSystem
+import gg.ginco.minigame.system.PlayerFreezeSystem
 import gg.ginco.minigame.system.RegionSystem
 import gg.ginco.minigame.util.Membership
 import java.util.logging.Level
@@ -23,6 +24,9 @@ class Plugin(init: JavaPluginInit) : JavaPlugin(init) {
         // Runs in every world; only acts inside instance worlds, where it
         // finishes a /minigame join whose transfer crossed a world boundary.
         entityStoreRegistry.registerSystem(InstanceEntrySystem())
+        // After entry: a player who lands during WAITING/COUNTDOWN is frozen
+        // on the same tick their membership is applied.
+        entityStoreRegistry.registerSystem(PlayerFreezeSystem())
         // Registered in setup() like the server's own lifecycle listeners —
         // start()-time registration does not feed the bus's hasListener()
         // gate, and the disconnect event is silently skipped when no listener

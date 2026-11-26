@@ -8,23 +8,21 @@ import com.hypixel.hytale.component.RemoveReason
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.component.system.tick.TickingSystem
 import com.hypixel.hytale.logger.HytaleLogger
-import com.hypixel.hytale.math.vector.Rotation3f
 import com.hypixel.hytale.server.core.Message
 import com.hypixel.hytale.server.core.universe.PlayerRef
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
-import gg.ginco.minigame.component.TeamData
+import gg.ginco.minigame.component.PreStartFreeze
 import gg.ginco.minigame.component.TeamRef
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.event.PlayerLeftInstanceEvent
-import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import gg.ginco.minigame.command.MinigameCommand
 import gg.ginco.minigame.util.Instances
 import gg.ginco.minigame.util.Phases
 import gg.ginco.minigame.util.PlayerSet
-import gg.ginco.minigame.util.Regions
+import gg.ginco.minigame.util.SpawnPlacement
 import java.util.function.BiConsumer
 
 /**
@@ -193,6 +191,7 @@ class PhaseSystem : TickingSystem<EntityStore>() {
                     PlayerLeftInstanceEvent.dispatch(playerRef.uuid, playerRef.username, ref, role,
                         player = playerRef, playerEntity = player)
                 }
+                PreStartFreeze.clear(store, player)
                 store.removeComponentIfExists(player, InMinigame.componentType)
                 store.removeComponentIfExists(player, Role.componentType)
                 store.removeComponentIfExists(player, TeamRef.componentType)
@@ -229,47 +228,14 @@ class PhaseSystem : TickingSystem<EntityStore>() {
      * (volumes, then points, each by id) carrying a bare `SPAWN_<TEAM>` tag
      * key — cycled `i % n` per pool; teams without their own pool draw from
      * the generic `spawn` pool; with no markers at all players simply stay
-     * where they are. Runs after the scan, on the world thread, so direct
-     * [TransformComponent] mutation is legal.
+     * where they are.
+     *
+     * Players that `InstanceEntrySystem` already placed on arrival are not
+     * moved again ([SpawnPlacement] skips a target they already stand on), so
+     * the entry hop and the start of the game no longer read as two teleports.
      */
     private fun teleportPlayersToSpawnPoints(store: Store<EntityStore>, controllerRef: Ref<EntityStore>) {
-        val world = store.externalData.world
-        var generic: List<Regions.SpawnPoint>? = null // memoized only if a team pool turns up empty
-        val players = PlayerSet(store, controllerRef).all()
-        val cycle = HashMap<String, Int>() // pool key -> players served, so pools cycle independently
-        for (player in players) {
-            val teamName = store.getComponent(player, TeamRef.componentType)?.teamRef
-                ?.let { store.getComponent(it, TeamData.componentType)?.name }
-                ?.takeUnless { it.isEmpty() }
-            val poolKey = teamName?.let(Regions::spawnTypeFor) ?: ""
-            val spawns = teamName
-                ?.let { Regions.spawnPointsOf(world, Regions.spawnTypeFor(it)) }
-                ?.takeIf { it.isNotEmpty() }
-                ?: (generic ?: Regions.spawnPointsOf(world).also { generic = it })
-            if (spawns.isEmpty()) continue
-            val index = cycle.merge(poolKey, 1, Int::plus)!! - 1
-            val target = spawns[index % spawns.size]
-            val transform = store.getComponent(player, TransformComponent.getComponentType()) ?: continue
-            // A raw TransformComponent mutation moves the server-side entity only —
-            // the client never learns about it, its authoritative movement drags
-            // the entity straight back, and everyone stays at their arrival
-            // point. This is the server's own mid-play player-teleport pattern
-            // (GamePacketHandler / AbilityPullSystem): move the server entity,
-            // mark a client teleport pending, and snap the client with a
-            // ClientTeleport packet (Teleport AckTracker tracks the ack).
-            transform.teleportPosition(target.position)
-            target.rotation?.let { transform.teleportRotation(it) }
-            val rotation = target.rotation ?: transform.rotation
-            store.addComponent(
-                player,
-                com.hypixel.hytale.server.core.modules.entity.teleport.PendingTeleport.getComponentType(),
-                com.hypixel.hytale.server.core.modules.entity.teleport.PendingTeleport(),
-            )
-            store.getComponent(player, PlayerRef.getComponentType())?.let { playerRef ->
-                com.hypixel.hytale.server.core.modules.entity.teleport.TeleportSystems
-                    .queueAndSendClientTeleport(playerRef, target.position, rotation, rotation, true)
-            }
-        }
+        SpawnPlacement.placeAll(store, controllerRef)
     }
 
     /** Advances this world's per-thread tick counter and returns the tick number. */

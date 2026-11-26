@@ -8,11 +8,16 @@ import com.hypixel.hytale.component.RemoveReason
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.component.system.tick.TickingSystem
 import com.hypixel.hytale.server.core.Message
+import com.hypixel.hytale.server.core.entity.Frozen
 import com.hypixel.hytale.server.core.universe.PlayerRef
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.PendingInstanceEntry
+import gg.ginco.minigame.component.Phase
+import gg.ginco.minigame.component.PreStartFreeze
+import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.util.Instances
 import gg.ginco.minigame.util.PlayerSet
+import gg.ginco.minigame.util.SpawnPlacement
 import java.util.function.BiConsumer
 
 /**
@@ -53,8 +58,28 @@ class InstanceEntrySystem : TickingSystem<EntityStore>() {
             // Membership is rebuilt from the controller's rosters, not carried
             // over: the player may have disconnected and rejoined across the
             // transfer, and a stale ref would point at a dead entity.
-            Instances.applyMembership(store, ref, controllerRef, entry.role())
+            // A player hopped into the instance with their entity intact; a
+            // previous pre-start freeze must not follow them in (the phase
+            // check below re-applies it when this instance is still waiting).
+            store.removeComponentIfExists(ref, PreStartFreeze.componentType)
+            store.removeComponentIfExists(ref, Frozen.getComponentType())
+
+            val role = entry.role()
+            Instances.applyMembership(store, ref, controllerRef, role)
             store.removeComponent(ref, PendingInstanceEntry.componentType)
+
+            // The builtin instance transfer always lands on the WORLD spawn;
+            // move straight to the authored team spawn so the start-of-game
+            // placement in PhaseSystem has nothing left to move.
+            val phase = store.getComponent(controllerRef, Phase.componentType)
+            if (phase != null && phase.kind != Phase.Kind.ENDING && phase.kind != Phase.Kind.CLEANUP) {
+                SpawnPlacement.place(store, controllerRef, ref)
+            }
+            if ((phase?.kind == Phase.Kind.WAITING || phase?.kind == Phase.Kind.COUNTDOWN) &&
+                role.kind == Role.Kind.PARTICIPANT
+            ) {
+                PreStartFreeze.apply(store, ref)
+            }
 
             val playerRef = store.getComponent(ref, PlayerRef.getComponentType()) ?: continue
             PlayerSet(store, controllerRef).sendMessage(Message.raw("${playerRef.username} joined the minigame."))

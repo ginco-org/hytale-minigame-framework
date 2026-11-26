@@ -995,6 +995,9 @@ class LeaveCommand : AbstractPlayerCommand("leave", "minigame.commands.leave.des
 
         if (controllerRef.isValid()) {
             PlayerSet(store, controllerRef).sendMessage(Message.raw("${playerRef.username} left the minigame."))
+            // Other players remain, so the instance (and its world) stays up —
+            // send the leaver home instead of leaving them inside it.
+            if (Instances.isInstanceWorld(world)) Instances.teleportPlayerOut(playerRef)
         }
     }
 

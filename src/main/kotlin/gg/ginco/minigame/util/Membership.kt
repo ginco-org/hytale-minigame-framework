@@ -3,10 +3,12 @@ package gg.ginco.minigame.util
 import com.hypixel.hytale.component.Ref
 import com.hypixel.hytale.component.Store
 import com.hypixel.hytale.server.core.Message
+import com.hypixel.hytale.server.core.entity.Frozen
 import com.hypixel.hytale.server.core.universe.PlayerRef
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.Phase
+import gg.ginco.minigame.component.PreStartFreeze
 import gg.ginco.minigame.component.PreservedMember
 import gg.ginco.minigame.component.PreservedMembers
 import gg.ginco.minigame.component.Role
@@ -68,6 +70,9 @@ object Membership {
         fun preserveAndAnnounce() {
             val ref = playerRef.reference ?: return // fresh: the release above may have mutated the archetype
             val store = ref.store
+            // A disconnect during a frozen wait must not save Frozen with the
+            // player entity (it would come back frozen on reconnect).
+            PreStartFreeze.clear(store, ref)
             val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
                 ?: return@preserveAndAnnounce
             // The role MUST be read on the player's own store thread, where the
@@ -140,12 +145,14 @@ object Membership {
         val store = instanceWorld.entityStore.store
         if (!controllerRef.isValid()) return
 
+        // Rosters are uuid-keyed, and a QUEUED player has no entity in the
+        // instance store yet — so drop the uuid from every team roster of this
+        // controller, not only from the team its (possibly absent) TeamRef names.
+        for (team in Teams.of(store, controllerRef)) {
+            store.getComponent(team.ref, TeamMembers.componentType)?.members?.remove(uuid)
+        }
         val playerEntity = PlayerSet.findByUuid(store, uuid)
         if (playerEntity != null) {
-            val teamRef = store.getComponent(playerEntity, TeamRef.componentType)?.teamRef
-            if (teamRef != null && teamRef.isValid()) {
-                store.getComponent(teamRef, TeamMembers.componentType)?.members?.remove(uuid)
-            }
             store.removeComponentIfExists(playerEntity, TeamRef.componentType)
         }
         store.getComponent(controllerRef, PreservedMembers.componentType)
@@ -155,6 +162,7 @@ object Membership {
         // store and is unreachable from here — the event carries uuid/username
         // only (player/playerEntity stay null).
         PlayerLeftInstanceEvent.dispatch(uuid, username, controllerRef, null)
+        Instances.endInstanceIfEmpty(instanceWorld, controllerRef)
     }
 
     /**
@@ -206,6 +214,12 @@ object Membership {
         val candidate = candidates.firstOrNull() ?: return false
         val (controllerRef, entry, preservedList) = candidate
 
+        // A disconnect during a frozen wait can leave Frozen on the saved
+        // entity; the returning player starts thawed, and the phase
+        // reconciliation re-freezes them if the instance is still pre-start.
+        store.removeComponentIfExists(ref, PreStartFreeze.componentType)
+        store.removeComponentIfExists(ref, Frozen.getComponentType())
+
         store.addComponent(ref, InMinigame.componentType, InMinigame(controllerRef))
         val roleKind = Role.Kind.entries.firstOrNull { it.name == entry.roleKind }
             ?: Role.Kind.PARTICIPANT
@@ -236,6 +250,7 @@ object Membership {
     fun leave(store: Store<EntityStore>, ref: Ref<EntityStore>, playerRef: PlayerRef): Ref<EntityStore>? {
         val controllerRef = store.getComponent(ref, InMinigame.componentType)?.controllerRef
         val role = store.getComponent(ref, Role.componentType)
+        PreStartFreeze.clear(store, ref)
 
         val teamRef = store.getComponent(ref, TeamRef.componentType)?.teamRef
         if (teamRef != null && teamRef.isValid()) {
@@ -253,6 +268,7 @@ object Membership {
         if (controllerRef != null && controllerRef.isValid()) {
             PlayerLeftInstanceEvent.dispatch(playerRef.uuid, playerRef.username, controllerRef, role,
                 player = playerRef, playerEntity = ref)
+            Instances.endInstanceIfEmpty(store.externalData.world, controllerRef)
         }
         return controllerRef
     }

@@ -1,6 +1,8 @@
 package gg.ginco.minigame
 
 import com.hypixel.hytale.component.Ref
+import com.hypixel.hytale.server.core.entity.Frozen
+import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent
 import com.hypixel.hytale.server.core.universe.Universe
 import com.hypixel.hytale.server.core.universe.world.World
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore
@@ -16,7 +18,9 @@ import gg.ginco.minigame.hytaletest.MinigameTestHarness
 import gg.ginco.minigame.hytaletest.Players
 import gg.ginco.minigame.util.InstanceRegistry
 import gg.ginco.minigame.util.Instances
+import gg.ginco.minigame.util.Regions
 import gg.ginco.minigame.util.Teams
+import org.joml.Vector3d
 
 /**
  * Instance worlds: a minigame instance that runs in its own temporary world,
@@ -142,6 +146,13 @@ class MinigameInstanceWorldTest {
             t.assertEquals(null, Universe.get().getWorld(worldName),
                 "instance world '$worldName' should have been removed")
         }
+    }
+
+    private data class SpawnState(val position: Vector3d, val frozen: Boolean, val baseSpeed: Float?)
+
+    private fun near(actual: Vector3d, expected: Vector3d, tolerance: Double): Boolean {
+        val dx = actual.x - expected.x; val dy = actual.y - expected.y; val dz = actual.z - expected.z
+        return dx * dx + dy * dy + dz * dz <= tolerance * tolerance
     }
 
     /**
@@ -280,6 +291,128 @@ class MinigameInstanceWorldTest {
                 val ref = bob.ref().reference
                 t.assertTrue(ref != null && MinigameTestHarness.inMinigameOf(MinigameTestHarness.storeOf(lobby), ref) == null,
                     "membership must not follow the player back into the lobby")
+            }
+            awaitWorldGone(t, worldName)
+            t.succeed()
+        } finally {
+            cleanup()
+        }
+    }
+
+    /**
+     * The builtin instance transfer always lands on the WORLD spawn, never on a
+     * minigame `SPAWN_*` marker. Entry placement must put the player on their
+     * team's marker immediately, and the start-of-game pass must then have
+     * nothing left to move — otherwise every player sees two teleports: one to
+     * the map and one to the actual spawnpoint.
+     *
+     * The same pass also pins the pre-start freeze: participants wait frozen
+     * and are thawed exactly when Playing begins.
+     */
+    @HytaleTest(timeoutSeconds = 120)
+    fun entryPlacesPlayerOnTeamSpawnWithoutASecondTeleport(t: HytaleTestHelper) {
+        try {
+            val world = setupInstance(t, "spawn", listOf("red", "blue"))
+            val marker = Vector3d(120.0, 70.0, 140.0)
+            onInstanceWorld(world) {
+                val h = Regions.HALF_EXTENT
+                Regions.addRegion(world, Regions.spawnTypeFor("red"),
+                    marker.x - h, marker.y - h, marker.z - h,
+                    marker.x + h, marker.y + h, marker.z + h)
+            }
+
+            val bob = player(t, "Bob")
+            bob.runCommand("minigame join --asset=$assetName --team=red").join()
+
+            t.assertEventually(30) {
+                val state = onInstanceWorld(world) {
+                    val store = world.entityStore.store
+                    val ref = bob.ref().reference ?: return@onInstanceWorld null
+                    val transform = store.getComponent(ref, TransformComponent.getComponentType())
+                        ?: return@onInstanceWorld null
+                    SpawnState(
+                        Vector3d(transform.position),
+                        store.getComponent(ref, Frozen.getComponentType()) != null,
+                        store.getComponent(ref, com.hypixel.hytale.server.core.entity.entities.player.movement.MovementManager.getComponentType())
+                            ?.getSettings()?.baseSpeed,
+                    )
+                }
+                t.assertNotNull(state, "player should land in the instance world")
+                t.assertTrue(near(state!!.position, marker, 1.0),
+                    "entry should place the player on their team spawn, got ${state.position}")
+                t.assertTrue(state.frozen,
+                    "a participant must be frozen while the instance waits")
+                t.assertEquals(0f, state.baseSpeed,
+                    "the pre-start freeze must zero the player's movement speed")
+            }
+
+            creator!!.runCommand("minigame start --asset=$assetName --seconds=1").join()
+
+            t.assertEventually(30) {
+                val state = onInstanceWorld(world) {
+                    val store = world.entityStore.store
+                    val controller = Instances.findController(world, gameTypeId!!)!!
+                    val ref = bob.ref().reference ?: return@onInstanceWorld null
+                    val transform = store.getComponent(ref, TransformComponent.getComponentType())
+                        ?: return@onInstanceWorld null
+                    SpawnState(
+                        Vector3d(transform.position),
+                        store.getComponent(ref, Frozen.getComponentType()) != null,
+                        store.getComponent(ref, com.hypixel.hytale.server.core.entity.entities.player.movement.MovementManager.getComponentType())
+                            ?.getSettings()?.baseSpeed,
+                    ) to MinigameTestHarness.phaseOf(store, controller)?.kind
+                }
+                t.assertNotNull(state, "player should remain in the instance world")
+                t.assertEquals(Phase.Kind.PLAYING, state!!.second, "instance should reach Playing")
+                t.assertTrue(near(state.first.position, marker, 1.0),
+                    "start must not teleport the player again, got ${state.first.position}")
+                t.assertFalse(state.first.frozen, "participant should be thawed when Playing starts")
+                t.assertTrue((state.first.baseSpeed ?: 0f) > 0f,
+                    "the thaw must restore the player's movement speed, got ${state.first.baseSpeed}")
+            }
+            t.succeed()
+        } finally {
+            cleanup()
+        }
+    }
+
+    /**
+     * The last player's voluntary leave ends the instance world: the roster
+     * empties, the controller is removed and the builtin reaps the world (the
+     * leaver is sent back to the lobby). Before this, the world stayed WAITING
+     * with zero seats and kept showing up in `/minigame list`.
+     */
+    @HytaleTest(timeoutSeconds = 180)
+    fun lastPlayerLeavingEndsInstanceWorld(t: HytaleTestHelper) {
+        try {
+            val lobby = t.world
+            val instanceWorld = setupInstance(t, "leave")
+            val bob = player(t, "Bob")
+            bob.runCommand("minigame join --asset=$assetName").join()
+
+            t.assertEventually(30) {
+                val ref = bob.ref().reference
+                t.assertTrue(ref != null && ref.store == instanceWorld.entityStore.store,
+                    "player should land in the instance world")
+            }
+            t.assertEventually(30) {
+                onInstanceWorld(instanceWorld) {
+                    val store = instanceWorld.entityStore.store
+                    val ref = bob.ref().reference
+                    t.assertNotNull(ref, "player should still be in the instance world")
+                    t.assertNotNull(MinigameTestHarness.inMinigameOf(store, ref!!),
+                        "membership should be applied before leave")
+                }
+            }
+
+            val worldName = instanceWorld.name
+            bob.runCommand("minigame leave").join()
+            // Teardown is underway; cleanup must not try to end it a second time.
+            world = null
+
+            t.assertEventually(30) {
+                t.assertEquals(lobby.entityStore.store, bob.ref().reference?.store,
+                    "leaving should send the player home")
             }
             awaitWorldGone(t, worldName)
             t.succeed()

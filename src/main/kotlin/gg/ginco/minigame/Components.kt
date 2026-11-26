@@ -8,6 +8,7 @@ import gg.ginco.minigame.component.InstanceStats
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.PendingInstanceEntry
 import gg.ginco.minigame.component.Phase
+import gg.ginco.minigame.component.PreStartFreeze
 import gg.ginco.minigame.component.PreservedMembers
 import gg.ginco.minigame.component.Role
 import gg.ginco.minigame.component.TeamData
@@ -34,6 +35,7 @@ object Components {
         InMinigame.componentType = registry.registerComponent(InMinigame::class.java) { InMinigame() }
         InstanceId.componentType = registry.registerComponent(InstanceId::class.java) { InstanceId() }
         PendingInstanceEntry.componentType = registry.registerComponent(PendingInstanceEntry::class.java) { PendingInstanceEntry() }
+        PreStartFreeze.componentType = registry.registerComponent(PreStartFreeze::class.java) { PreStartFreeze() }
         PreservedMembers.componentType = registry.registerComponent(PreservedMembers::class.java) { PreservedMembers() }
         InstanceStats.componentType = registry.registerComponent(InstanceStats::class.java) { InstanceStats() }
 

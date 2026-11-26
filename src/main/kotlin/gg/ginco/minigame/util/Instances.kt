@@ -22,6 +22,7 @@ import gg.ginco.minigame.component.ControllerComponent
 import gg.ginco.minigame.component.InMinigame
 import gg.ginco.minigame.component.InstanceId
 import gg.ginco.minigame.component.PendingInstanceEntry
+import gg.ginco.minigame.component.PreStartFreeze
 import gg.ginco.minigame.component.PreservedMembers
 import gg.ginco.minigame.component.Phase
 import gg.ginco.minigame.component.Role
@@ -314,6 +315,7 @@ object Instances {
 
     /** Strips every membership component from [playerEntity] (does not touch rosters). */
     fun stripMembership(store: Store<EntityStore>, playerEntity: Ref<EntityStore>) {
+        PreStartFreeze.clear(store, playerEntity)
         store.removeComponentIfExists(playerEntity, InMinigame.componentType)
         store.removeComponentIfExists(playerEntity, Role.componentType)
         store.removeComponentIfExists(playerEntity, TeamRef.componentType)
@@ -354,9 +356,13 @@ object Instances {
         // entity, and membership must be stripped while the refs are still valid.
         for (player in players) {
             // Left fires BEFORE the strip: role and PlayerRef are still readable.
+            // Only players still linked to THIS controller are members — a player
+            // who already left (and triggered the empty-instance teardown) must
+            // not get a second PlayerLeftInstanceEvent.
             val playerRef = store.getComponent(player, PlayerRef.getComponentType())
             val role = store.getComponent(player, Role.componentType)
-            if (playerRef != null) {
+            val linked = store.getComponent(player, InMinigame.componentType)?.controllerRef == controllerRef
+            if (playerRef != null && linked) {
                 PlayerLeftInstanceEvent.dispatch(playerRef.uuid, playerRef.username, controllerRef, role,
                     player = playerRef, playerEntity = player)
             }
@@ -378,6 +384,22 @@ object Instances {
         store.removeEntity(controllerRef, RemoveReason.REMOVE)
 
         InstancesPlugin.safeRemoveInstance(instanceWorld)
+    }
+
+    /**
+     * Ends [instanceWorld] once its last seat is gone. Seats include roster-only
+     * (queued) and preserved (disconnected) members, so an instance whose only
+     * player disconnected keeps its world for a reconnect; a voluntary leave
+     * that empties the roster tears the world down immediately.
+     *
+     * **Must run on the instance world's thread** ([runOnWorld]).
+     */
+    fun endInstanceIfEmpty(instanceWorld: World, controllerRef: Ref<EntityStore>) {
+        if (!isInstanceWorld(instanceWorld)) return
+        if (!controllerRef.isValid()) return
+        val store = instanceWorld.entityStore.store
+        if (MinigameCommand.seatCount(store, controllerRef) > 0) return
+        endInstance(instanceWorld, controllerRef)
     }
 
     // ---- queued players (pre-start) ------------------------------------------
